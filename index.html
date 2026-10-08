@@ -687,8 +687,7 @@
 <body>
 
 <div class="top-bar">
-  <h1>🔍 원산지 결정기준 위반 위험 탐색 툴 <small style="font-weight:normal">v4-10 · 시나리오 카드 그리드 · BOM 자동 렌더</small></h1>
-  <small>7개 관점 통합 분석 · 3번 지침 기반 종합 보고서 · 단일 HTML 실행</small>
+  <h1>🔍 원산지 결정기준 위반 위험 탐색 툴 <small style="font-weight:normal">v4-10</small></h1>
 </div>
 
 <!-- ═══════════════════ 셋업 화면 ═══════════════════ -->
@@ -776,7 +775,7 @@
         <input type="checkbox" id="opt-ai" class="form-check-input m-0" checked>
         <label for="opt-ai" class="m-0 small">🤖 AI 분석 시나리오 (Gemini 호출)</label>
       </span>
-      <span class="float-end small text-muted" id="data-info"></span>
+
     </div>
     <div class="alert alert-success mt-2 mb-0 py-2" style="font-size:.82rem">
       <strong>✓ 전체 데이터 로드:</strong> HS <strong>01~97류 전체</strong> · <strong>약 250개 수입국</strong> · <strong>21개 FTA PSR</strong> 전 HS 커버.
@@ -2482,10 +2481,6 @@ function enterApp() {
 
   // ── FTA 드롭다운 ──
   document.getElementById("inp-fta").innerHTML = buildFlatOpts(Object.keys(state.psrData.ftaData));
-
-  // 데이터 정보
-  document.getElementById("data-info").textContent =
-    `데이터: 관세율 ${Object.keys(state.tariffByHs10).length.toLocaleString()} HS10 · PSR ${Object.keys(state.psrData.ftaData).length} FTAs · 원산지국 ${COUNTRIES.length}개국`;
 
   // 옵션 체크박스
   document.getElementById("opt-cbp").addEventListener("change", e => {
