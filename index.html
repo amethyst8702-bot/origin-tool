@@ -5979,11 +5979,12 @@ async function callOecdTiva(countryName, tivaSector) {
   try {
     const url = `${PROXY_BASE}/api/oecd-tiva?country_iso3=${iso}&sector=${encodeURIComponent(tivaSector)}`;
     const r = await fetch(url, { signal: _abortableSignal(20000) });
-    if (!r.ok) return null;
-    return await r.json();
+    const data = await r.json();
+    if (!r.ok) return data.error ? data : { error: `OECD TiVA HTTP ${r.status}` };
+    return data;
   } catch (e) {
     console.warn("OECD TiVA 호출 실패:", e.message);
-    return null;
+    return { error: e.message };
   }
 }
 
