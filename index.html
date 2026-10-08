@@ -3588,7 +3588,7 @@ function runBomAnalysis(input) {
     const repName = userName || standardName || "품명 확인 필요";
     return {
       status: "na",
-      reason: `${indInfo.sector} 품목(HS ${hs2}류)은 BOM 분석 비대상 — 농산물·식품·광물·1차생산품은 부분품 개념이 없거나 약하여 세번변경(BOM) 평가가 부적절합니다. 이 품목군의 원산지는 BOM이 아닌 [완전생산기준(WO)·재배지·생산기록]으로 판단됩니다.`,
+      reason: `${indInfo.sector} 품목(HS ${hs2}류)은 BOM 분석 비대상 — 농산물·식품·광물·1차생산품은 부분품 개념이 없거나 약하여 세번변경(BOM) 평가가 부적절합니다. 이 표는 부분품 조립 여부를 보는 참고 분석입니다. 실제 원산지는 선택 협정의 품목별 기준(PSR)에 따라 원재료·생산공정·생산기록으로 별도 판단해야 합니다.`,
       productName: repName,
       standardName: standardName,
       userProvidedName: !!userName,
@@ -8855,9 +8855,22 @@ async function translateCbpRulings(data) {
   }
 }
 
+function normalizeCbpTextList(value) {
+  if (value == null || value === '') return [];
+  const items = Array.isArray(value) ? value : [value];
+  return items.filter(v => typeof v === 'string' || typeof v === 'number')
+    .map(v => String(v).trim()).filter(Boolean);
+}
+
 function renderCbpRulings(data, trMap, sumMap) {
   const container = document.getElementById("cbp-body");
-  const rulings = data.rulings || [];
+  const rulings = (Array.isArray(data.rulings) ? data.rulings : []).map(r => ({
+    ...r,
+    tariffs: normalizeCbpTextList(r.tariffs),
+    categories: normalizeCbpTextList(r.categories).join(', '),
+    rulingDate: r.rulingDate == null ? '' : String(r.rulingDate),
+    relatedRulings: Array.isArray(r.relatedRulings) ? r.relatedRulings : (r.relatedRulings ? [r.relatedRulings] : []),
+  }));
   const counts = data.counts || {};
   const usedTerm = data.used_term || "";
   const totalHits = data.total_hits || 0;
@@ -9139,9 +9152,9 @@ function renderSummary() {
     </table>` : naBox("수입 실적 데이터 없음");
 
   const matrixRow = (label, risk, detail) => {
-    const badge = risk === "high" ? "🔴 고위험" : risk === "mid" ? "🟡 중위험" : risk === "na" ? "➖ 해당없음" : "🟢 저위험";
+    const badge = risk === "high" ? "🔴 고위험" : risk === "mid" ? "🟡 중위험" : risk === "na" ? "➖ 해당없음" : risk === "pending" ? "⚪ 판정 보류" : "🟢 저위험";
     return `<tr><td><strong>${label}</strong></td>
-      <td><span class="risk-badge-${risk === "na" ? "na" : risk}">${badge}</span></td>
+      <td><span class="risk-badge-${(risk === "na" || risk === "pending") ? "na" : risk}">${badge}</span></td>
       <td>${detail}</td></tr>`;
   };
 
@@ -9220,8 +9233,11 @@ function renderSummary() {
           psrOk && R.psr.mainHit.code === "WO" ? "high" : "na",
           psrOk && R.psr.mainHit.code === "WO" ? "완전생산 필수 - 역외 원재료 불가" : "WO 기준 아님")}
         ${matrixRow("세번변경기준 (CC/CTH/CTSH)",
-          bomOk ? R.bom.risk : "na",
-          bomOk ? `동일 호 부분품 ${R.bom.partsCount}개 존재 (${R.bom.partsRatio.toFixed(0)}%)` : "HS 분석 불가")}
+          psrOk && /CC|CTH|CTSH/.test(R.psr.mainHit.code) ? (bomOk ? R.bom.risk : "pending") : "na",
+          psrOk && /CC|CTH|CTSH/.test(R.psr.mainHit.code)
+            ? (bomOk ? `동일 호 부분품 ${R.bom.partsCount}개 존재 (${R.bom.partsRatio.toFixed(0)}%) — 부분품 분류에 따른 참고 위험도이며 충족 확정 아님`
+              : `${R.psr.mainHit.code} 기준 적용 — 원재료 HS·원산지 및 생산공정 자료 부족으로 충족 여부 판정 보류. 부분품 BOM 분석 비대상이어도 세번변경기준은 적용될 수 있습니다.`)
+            : (psrOk ? "선택된 PSR에 세번변경기준 없음" : "PSR 미확인 — 적용 기준 확인 필요"))}
         ${matrixRow("부가가치기준 (RVC)",
           rvcOk ? R.rvc.risk : "na",
           rvcOk ? R.rvc.assessment.replace(/[🔴🟡🟢]/g, '').trim() : "RVC 기준 아님 또는 FTA 미선택")}
