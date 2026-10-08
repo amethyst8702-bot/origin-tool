@@ -8770,6 +8770,7 @@ async function fetchCbpCrossRulings(hs) {
   }
 
   // 1차: 원문 그대로 즉시 렌더 (사용자 대기 시간 단축)
+  window.__cbpState = { data, translations: null, summaries: null };
   renderCbpRulings(data, null, null);
 
   // 2차: Gemini 배치 번역 요청
@@ -8800,7 +8801,12 @@ async function summarizeCbpRulings(data) {
     const resp = await fetch(`${PROXY_BASE}/api/cbp-cross/summarize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rulingNumbers: targetNumbers }),
+      body: JSON.stringify({ rulingNumbers: targetNumbers, analysisContext: {
+        hs: state.input?.hs, productName: state.input?.name || state.results?.tariff?.name || '',
+        userDetail: state.input?.userDetail || '', origin: state.input?.origin,
+        originIsHypothesis: !!state.input?.autoDetected, transit: state.input?.transit,
+        fta: state.input?.fta, psr: state.results?.psr?.mainHit?.code || '',
+      } }),
       signal: _abortableSignal(120000),
     });
     if (!resp.ok) throw new Error(`프록시 응답 ${resp.status}`);
@@ -8813,6 +8819,7 @@ async function summarizeCbpRulings(data) {
     // rulingNumber 기준 map 생성
     const sumMap = {};
     for (const s of sumData.summaries || []) sumMap[s.rulingNumber] = s;
+    if (window.__cbpState.data !== data) return;
     window.__cbpState.summaries = sumMap;
     renderCbpRulings(window.__cbpState.data, window.__cbpState.translations, sumMap);
   } catch (e) {
@@ -8847,6 +8854,7 @@ async function translateCbpRulings(data) {
     // 번역 map 생성 (id → {subject_ko, categories_ko})
     const trMap = {};
     for (const t of tr.translations || []) trMap[t.id] = t;
+    if (window.__cbpState.data !== data) return;
     window.__cbpState.translations = trMap;
     window.__cbpState.data = data;
     renderCbpRulings(data, trMap, window.__cbpState.summaries);
@@ -8871,6 +8879,10 @@ function renderCbpRulings(data, trMap, sumMap) {
     rulingDate: r.rulingDate == null ? '' : String(r.rulingDate),
     relatedRulings: Array.isArray(r.relatedRulings) ? r.relatedRulings : (r.relatedRulings ? [r.relatedRulings] : []),
   }));
+  if (sumMap) rulings.sort((a, b) => {
+    const rank = r => ({high: 3, medium: 2, low: 1, insufficient: 0}[sumMap[r.rulingNumber]?.similarity_level] ?? -1);
+    return rank(b) - rank(a);
+  });
   const counts = data.counts || {};
   const usedTerm = data.used_term || "";
   const totalHits = data.total_hits || 0;
@@ -8930,7 +8942,7 @@ function renderCbpRulings(data, trMap, sumMap) {
     // 요약이 있으면 판례 내용 카드 추가
     const sum = sumMap ? sumMap[r.rulingNumber] : null;
     // 요약 대상 인덱스 (상위 10건)
-    const isSummaryTarget = idx < 10;
+    const isSummaryTarget = (data.rulings || []).slice(0, 10).some(v => v.rulingNumber === r.rulingNumber);
     let summaryHtml = '';
     if (sum && (sum.product_ko || sum.summary_ko)) {
       summaryHtml = `
@@ -8967,6 +8979,10 @@ function renderCbpRulings(data, trMap, sumMap) {
           </div>
           <div class="mb-1">${categoriesHtml}</div>
           ${subjectHtml}
+          <div class="small mt-2"><b>유사성:</b> ${_safe(({high:'높음', medium:'보통', low:'낮음', insufficient:'자료 부족'})[sum?.similarity_level] || (hasSummary ? '미평가' : '평가 중'))}
+            ${sum?.similarity_reason_ko ? ' — ' + _safe(sum.similarity_reason_ko) : ''}
+            ${sum?.legal_difference_ko ? '<br><b>적용 규정 차이:</b> ' + _safe(sum.legal_difference_ko) : ''}
+          </div>
           ${summaryHtml}
           ${tariffs ? `<div class="small mt-2"><b class="text-muted">관련 관세:</b> ${tariffs}</div>` : ""}
           <div class="mt-2">
@@ -8982,9 +8998,10 @@ function renderCbpRulings(data, trMap, sumMap) {
   const translationNote = hasTranslation
     ? `<span class="text-success">✓ 번역 완료</span>`
     : `<span class="text-muted"><span class="spinner-border spinner-border-sm" style="width:.7em;height:.7em"></span> 번역 중…</span>`;
+  // 검색 첫 페이지 15건 중 기존 우선순위 상위 10건을 평가합니다.
   const summaryNote = hasSummary
-    ? `<span class="text-success">✓ 상위 5건 판례 요약 완료</span>`
-    : `<span class="text-muted"><span class="spinner-border spinner-border-sm" style="width:.7em;height:.7em"></span> 상위 5건 판례 원문 요약 중… (약 30초)</span>`;
+    ? `<span class="text-success">✓ 최대 10건 요약·유사성 평가 완료 — 검색 첫 페이지 후보 내 정렬, 미국 규정의 참고 판단</span>`
+    : `<span class="text-muted"><span class="spinner-border spinner-border-sm" style="width:.7em;height:.7em"></span> 최대 10건 판례 요약·유사성 평가 중…</span>`;
 
   // ─── 색상 안내 legend ───
   const legendHtml = `
