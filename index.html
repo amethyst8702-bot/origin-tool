@@ -829,7 +829,7 @@
     <!-- 탭5: PSR -->
     <div class="tab-pane fade tab-content-pane" id="tab-psr">
       <div class="analyzer-header">
-        <h3 class="title">1. PSR 위반 확률 — De Minimis·RVC 정량 분석</h3>
+        <h3 class="title">📋 품목별 원산지 기준 — 적용 규정과 검증 포인트</h3>
         <span class="badge bg-secondary badge-status" id="status-psr">대기</span>
       </div>
       <div id="psr-body">
@@ -3546,6 +3546,7 @@ async function _runAllAnalysesInternal() {
     Progress.update("✨ 종합 보고서 최종 반영 중...");
     renderSummary();
     renderAiTab();  // AI 분석 시나리오 탭 - 최종 결과 반영
+    renderPsrAiReview();
   }
 
   // 완료 → 0.8초 후 진행바 숨김 (완료 표시 유지)
@@ -4952,11 +4953,26 @@ function runPsrAnalysis(input) {
   };
 }
 
+function renderPsrAiReview() {
+  const host = document.getElementById('psr-ai-review');
+  if (!host) return;
+  const ai = state.aiAnalysis;
+  const text = ai && typeof ai.analysis === 'string' ? ai.analysis : '';
+  const match = text.match(/PSR 검토 시작([\s\S]*?)PSR 검토 끝/);
+  let content;
+  if (match) content = `<div style="white-space:pre-wrap;line-height:1.8">${_safe(match[1].trim())}</div>`;
+  else if (text) content = 'PSR 검토 블록을 받지 못했습니다. AI 분석 시나리오 탭에서 전체 응답을 확인하세요.';
+  else if (ai && ai.error) content = 'AI 검토 결과를 받지 못했습니다. 기준 조회 결과는 유지됩니다. AI 분석 탭에서 오류를 확인하세요.';
+  else content = '전체 분석에서 AI 분석 시나리오 옵션을 선택하면 기준별 위험 신호·근거 수준·확인자료가 표시됩니다.';
+  host.innerHTML = `<h5>🔎 PSR 맞춤 검토</h5><div class="alert alert-light border">${content}</div><small class="text-muted">검증 우선도는 추가 확인의 필요성을 뜻합니다. 개별 물품의 원산지 판정에는 거래·생산 증빙이 필요합니다.</small>`;
+}
+
 function renderPsr(r) {
   const body = document.getElementById("psr-body");
   if (r.status === "na") { body.innerHTML = naBox(r.reason); setStatus("psr","해당없음","bg-secondary"); return; }
 
   const main = r.mainHit;
+  if (!main) { body.innerHTML = naBox('선택 협정의 PSR을 확인하지 못했습니다.'); return; }
   const p = main.parsed || {};
   const allRows = r.allHits.map(h => `
     <tr${h.fta === main.fta ? ' class="key-row"' : ''}>
@@ -4979,7 +4995,7 @@ function renderPsr(r) {
   } else if (main.code.includes("CC")) {
     step2 += `원재료(비원산지)의 HS앞 2자리와 완제품의 HS앞 2자리를 비교해 <b>달라야</b> 합니다. 같으면 ❌`;
   } else if (main.code.includes("CTH")) {
-    step2 += `원재료와 완제품의 HS 4자리(호)가 달라야 합니다. 동일 호 내에서 가공만 했다면 ❌`;
+    step2 += `비원산지재료와 완제품의 HS 4자리(호)를 비교합니다. 비원산지재료가 완제품과 같은 호라면 해당 기준의 충족 여부와 예외·최소허용 적용 가능성을 별도로 확인해야 합니다.`;
   } else if (main.code.includes("CTSH")) {
     step2 += `HS 6자리만 달라지면 됩니다. 가장 완화된 기준.`;
   } else if (main.code.includes("RVC")) {
@@ -5009,9 +5025,9 @@ function renderPsr(r) {
     <div class="alert alert-info mt-3" style="border-left:4px solid #0d6efd;">
       <strong>💡 최소허용기준 (De Minimis) — ${main.fta}</strong>
       <div class="mt-1"><small>
-        PSR 기준을 충족하지 못하더라도, 비원산지재료의 가액이 제품가격의 <b>${main.deMinimis.pct}% 이하</b>면 원산지 인정 가능합니다.
+        저장된 협정 요약의 최소허용 비율은 <b>${main.deMinimis.pct}%</b>입니다. 이 수치만으로 원산지 충족을 판정하지 않습니다.
         ${main.deMinimis.note ? `<br><b>주의</b>: ${main.deMinimis.note}` : ''}
-        <br>👉 BOM 상 비원산지재료 비중이 ${main.deMinimis.pct}%를 넘는지 반드시 확인하세요.
+        <br>👉 적용 대상 재료·제외 품목·가액 또는 중량의 산정 기준·다른 충족 요건을 협정 원문에서 확인하세요.
       </small></div>
     </div>`;
 
@@ -5022,7 +5038,7 @@ function renderPsr(r) {
       <div class="mt-1"><small>
         <b>적용 방식:</b> ${main.cumulation.type}<br>
         ${main.cumulation.desc || '회원국 간 원산지 재료 상호 인정 여부는 협정문 참조'}
-        <br>👉 수출국에서 중간재를 다른 체결국에서 조달했다면, 누적기준으로 원산지 인정 가능할 수 있습니다.
+        <br>👉 조달국만으로 누적을 인정하지 않습니다. 해당 협정의 당사국 범위, 재료의 원산지 자격과 증빙 요건을 확인하세요.
       </small></div>
     </div>`;
 
@@ -5075,22 +5091,41 @@ function renderPsr(r) {
         <div class="sub">${main.codeNote}</div>
       </div></div>
       <div class="col-md-4"><div class="metric-card">
-        <div class="label">위반 가능성</div>
-        <div class="value"><span class="risk-badge-${main.risk}">${main.risk === "high" ? "🔴 높음" : main.risk === "mid" ? "🟡 보통" : "🟢 낮음"}</span></div>
-        <div class="sub">${p.hasException ? "⚠ 예외조항 반영" : p.hasAlternative ? "✨ 선택기준 반영" : "PSR 코드 기반"}</div>
+        <div class="label">원산지 충족 판정</div>
+        <div class="value"><span class="risk-badge-na">⚪ 별도 검증 필요</span></div>
+        <div class="sub">본 탭은 기준 조회 결과입니다. 실제 원재료·공정에 대한 충족 판정은 아닙니다.</div>
       </div></div>
     </div>
 
+    <div class="card mb-3"><div class="card-body">
+      <h6>🔎 적용 자료와 확인 범위</h6>
+      <div class="small">입력 HS: ${_safe(state.input?.hs || '')} → 조회 HS6: ${_safe(r.hs6)} · 선택 협정: ${_safe(main.fta)}</div>
+      <div class="small">자료의 HS 기준연도 필드: ${_safe(String(main.year || '미확인'))} · 규정 코드: ${_safe(main.code || '')}</div>
+      <div class="small mt-1">${main.fullText ? '저장된 협정문 추출 텍스트가 있습니다. 매칭 범위와 원문 페이지를 함께 확인하세요.' : '협정문 전체 규정은 확인되지 않았습니다. 저장된 코드와 요약을 공식 원문과 대조해야 합니다.'}</div>
+    </div></div>
+    <div class="card mt-3"><div class="card-body">
+      <h6>🧭 이 물품의 검증 순서</h6>
+      <p class="small mb-2">대상 물품: ${_safe(state.input?.name || state.results?.tariff?.name || '품명 미입력')} · 생산국 가정/입력: ${_safe(state.input?.origin || '미확인')} · 수출국: ${_safe(state.input?.transit || '')}</p>
+      <ol class="small mb-2">
+        <li>완제품의 정확한 품목분류와 협정에서 사용하는 HS 버전을 확인합니다.</li>
+        <li>원재료별 품명·HS·원산지 자격·가액을 정리하고, 확인되지 않은 재료를 구분합니다.</li>
+        <li>국가별로 수행된 생산공정과 투입재료를 연결합니다. 선적국과 생산국을 구분합니다.</li>
+        <li>${/CC|CTH|CTSH/.test(main.code) ? '비원산지재료별 세번변경을 비교하고, 규정의 제외 재료·추가 공정·선택 또는 결합 조건을 확인합니다.' : '해당 원산지 기준의 생산·가액·공정 요건을 자료와 대조합니다.'}</li>
+        <li>최소허용과 누적을 적용하려면 각 조항의 대상·한도·증빙 요건을 별도로 확인합니다.</li>
+      </ol>
+      <b class="small">📎 필요한 자료</b>
+      <p class="small mb-0">원재료 명세(BOM), 구매·수입 내역, 재료 원산지 증빙, 생산공정도·생산일지, 원가자료, 수출물품과 투입재료의 연결 기록. 실제 적용 기준에 맞춰 요청 범위를 정하세요.</p>
+    </div></div>
     <div class="conclusion-box">
       <strong>📌 이 품목의 원산지 기준 이해하기</strong>
       <div class="mt-2" style="line-height:1.7">
         <div class="mb-2">① ${step1}</div>
         <div class="mb-2">② ${step2}</div>
-        <div class="mb-0">③ <strong>규정 원문 (KITA 요약):</strong> <small>${main.desc}</small></div>
+        <div class="mb-0">③ <strong>저장된 PSR 요약:</strong> <small>${main.desc}</small></div>
         ${main.fullText ? `
         <div class="mt-2 p-2" style="background:#e8f5e9; border-left:3px solid #2e7d4a; border-radius:4px;">
           <strong>📜 협정문 원문 (PDF 풀텍스트):</strong>
-          <small class="d-block mt-1" style="white-space:pre-wrap">${main.fullText.ruleText.slice(0, 500)}${main.fullText.ruleText.length > 500 ? '…' : ''}</small>
+          <small class="d-block mt-1" style="white-space:pre-wrap">${_safe(main.fullText.ruleText)}</small>
           <small class="text-muted">출처: ${main.fullText.sourceFta} 협정문 PDF p.${main.fullText.page} · ${main.fullText.matchType === 'exact' ? 'HS6 정확 매칭' : 'HS4 근사 매칭'}</small>
         </div>` : (() => {
           // 풀텍스트가 없는 FTA — 사유 안내 + 공식 출처 링크
@@ -5124,6 +5159,8 @@ function renderPsr(r) {
 
     ${glossaryHtml}`;
   setStatus("psr", main.codeLabel, "bg-" + (main.risk === "high" ? "danger" : main.risk === "mid" ? "warning" : "success"));
+  body.insertAdjacentHTML('beforeend', '<div id="psr-ai-review" class="mt-4"></div>');
+  renderPsrAiReview();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5816,8 +5853,9 @@ async function callGeminiAnalysis() {
     summary: {
       psr_code: R.psr?.mainHit?.code,
       psr_label: R.psr?.mainHit?.codeLabel,
-      psr_desc: R.psr?.mainHit?.desc?.slice(0, 300),
-      psr_fulltext: R.psr?.mainHit?.fullText?.ruleText?.slice(0, 300),
+      psr_desc: R.psr?.mainHit?.desc || null,
+      psr_fulltext: R.psr?.mainHit?.fullText?.ruleText || null,
+      psr_lookup: { requestedFta: i.fta, matchedFta: R.psr?.mainHit?.fta, inputHs: i.hs, matchedHs: R.psr?.mainHit?.hs, sourceHsYear: R.psr?.mainHit?.year || null, hsConversionVerified: false },
       psr_exceptions: R.psr?.mainHit?.fullText?.exceptions || [],
       tariff_diff: R.tariff?.rateDiff,
       tariff_direct: R.tariff?.direct?.rate,
@@ -11905,8 +11943,17 @@ window.addEventListener("DOMContentLoaded", () => {
       ? "원산지 입력값은 수출국의 동일 HS 수입액 1위 상대국을 분석 가정으로 선정한 것입니다. 세계 생산량 순위나 개별 수출물품의 실제 원산지가 아닙니다. 해당 국가를 실제 생산국 또는 확인된 원산지로 단정하지 마세요. 점유율은 수입금액 비중이며 실제 원산지일 확률이 아닙니다. 종합 판단에서 국가·통계 연도·HS·선정 기준을 짧게 설명하고, 해당 국가를 원산지로 가정할 때의 조건부 시나리오임을 명시하세요. 공급국 순위나 점유율만으로 위반을 단정하거나 위험도를 높이지 마세요."
       : "원산지는 사용자가 입력한 값입니다. 증빙으로 확인된 사실이라고 단정하지 말고, 입력 원산지를 전제로 분석하세요.";
 
+    var psrRules = "【PSR 업무 분석 지침 v1】\n" +
+      "업로드된 PSR 설명·원문·예외를 우선 사용하고, 코드만으로 예외나 기준을 추가하지 마세요. 요청 협정과 조회 협정이 다르거나 기준이 없으면 기준 미확인으로 표시하세요. HS 연도 변환은 확인되지 않았으므로 변환했다고 주장하지 마세요.\n" +
+      "최초 챗봇의 업무 관점: WO는 현지 생산기반·원료 확보·생산지 추적, CC/CTH/CTSH는 핵심 비원산지재료의 HS와 세번변경 장애, RVC/MaxNOM은 고가 역외부품·조달국·가격, 특정공정은 요구공정과 현지 설비를 검토합니다. 알려지지 않은 제조사·공장·조달비율은 조사 대상 또는 가정으로 제시하세요.\n" +
+      "OR는 선택 경로 각각, AND는 모든 필수 경로 각각 검토하세요. 복잡한 괄호·예외·공정 조건을 보존하세요. 하나의 경로가 미확인이면 전체 충족을 단정하지 마세요. WO에 기후 위험이 있다는 사실만으로 WO 위반으로 판단하지 마세요.\n" +
+      "문장마다 필요한 곳에 근거 수준을 명시: 제공 기준자료 / 제공 통계 / 사용자 제공 / 산업 일반정보 / 분석 가정 / 미확인. 웹 검색 도구가 없으므로 이번 호출에서 검색·확인했다고 주장하거나 출처 URL·회사·금액을 생성하지 마세요. 공급망 후보는 확인된 해당 거래의 재료와 구분하세요.\n" +
+      "TiVA·국가 산업비율·수입단가·BOM 표준비율은 참고치입니다. 실제 거래의 RVC·최소허용 비율로 대체하지 마세요. 재료 원산지·HS·가격과 완제품 가격 및 협정 산식이 확보될 때만 계산하며, 없으면 필요한 값과 산식을 설명하세요. 동일 재료의 조달국이 회원국이어도 원산지 자격·누적 요건 확인 없이 역내산으로 합산하지 마세요. 수치 없는 위험 확률·고정 점수는 만들지 마세요.\n" +
+      "검증 우선도(높음/보통/낮음/판단 유보)와 원산지 충족 여부(충족/불충족/판정 유보)를 별도로 설명하세요. 통계·산업정보만 있으면 개별 물품 충족 여부는 판정 유보이며, 조건부 시나리오는 조건을 명시하세요.\n" +
+      "종합 판단 섹션 끝에 다음 텍스트 블록을 반드시 포함하세요(대괄호를 쓰지 마세요):\nPSR 검토 시작\n적용 기준: ...\n근거 수준: ...\n경로별 검토: 각 OR/AND 경로의 조건·위험 신호·미확인 사항\n검증 우선도: ... — 이유\n원산지 충족 여부: ... — 근거와 한계\n우선 확인자료: 구체적 재료·공정별 자료 3개\nPSR 검토 끝\n\n";
+
     return "다음은 한국으로 수입되는 물품의 원산지 분석 데이터입니다.\n\n" +
-      "【원산지 정보 해석 규칙】\n" + originRules + "\n\n" +
+      "【원산지 정보 해석 규칙】\n" + originRules + "\n\n" + psrRules +
       "【입력 정보】\n" + JSON.stringify(input, null, 2) + "\n\n" +
       "【분석 결과 요약】\n" + JSON.stringify(summary, null, 2) + "\n\n" +
       "【외부 데이터】\n" + JSON.stringify(external, null, 2) + "\n\n" +
@@ -11916,7 +11963,7 @@ window.addEventListener("DOMContentLoaded", () => {
       "※ 헤더 안의 값·본문에는 [ ] 사용 금지.\n\n" +
       "[품목 개요]\n실제 무엇인지·핵심 원재료·제조공정 (3-5문장).\n\n" +
       "[동향]\n수입 시장·산업 동향 (2-3문장).\n\n" +
-      "[공정 시나리오 분석]\n시나리오 1: 이름 — 가능성 (매우 높음/높음/보통/낮음)\n  배경: ...\n  세번 흐름: ① 원물 → ② 중간 → ③ 신고\n  PSR 평가: 충족/미충족 — 근거\n  위반 위험: 높음/보통/낮음\n(2-4개)\n\n" +
+      "[공정 시나리오 분석]\n시나리오 1: 이름 — 가능성 (매우 높음/높음/보통/낮음)\n  배경: ...\n  세번 흐름: ① 원물 → ② 중간 → ③ 신고\n  PSR 평가: 조건부 충족/조건부 미충족/판정 유보 — 근거 수준과 미확인 사항\n  위반 위험: 높음/보통/낮음\n(2-4개)\n\n" +
       "[종합 판단]\n가장 가능성 큰 시나리오 기준 위험 평가 (3-4문장).\n\n" +
       "[검증 권고]\n- 자료1\n- 자료2\n- 자료3\n" + (extra || "");
   }
