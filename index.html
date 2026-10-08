@@ -2621,9 +2621,9 @@ const PROXY_BASE = "https://script.google.com/macros/s/AKfycbxonToA2Cf9Oi20owJDb
 // 프록시 헬스체크 (true = 프록시 살아있음)
 async function proxyAlive() {
   try {
-    const r = await fetch(`${PROXY_BASE}/health`, { signal: _abortableSignal(2000) });
+    const r = await fetch(`${PROXY_BASE}/health`, { signal: _abortableSignal(15000) });
     const d = await r.json();
-    return d.ok === true;
+    return r.ok && d.ok === true;
   } catch { return false; }
 }
 
@@ -3245,9 +3245,9 @@ async function _runAllAnalysesInternal() {
     const useProxyCheck = await proxyAlive();
     if (!useProxyCheck) {
       // 프록시 없으면 자동탐지 불가 — 경고만 표시 후 분석 계속 (원산지 의존 탭은 스킵)
-      console.warn("프록시 서버 미실행 — 공급국 후보 추정 불가, 원산지 의존 분석 생략");
+      console.warn("분석 서버 연결 실패 — 공급국 후보 추정 불가, 원산지 의존 분석 생략");
       autoDetectFailed = true;
-      autoDetectError = "프록시 서버 미실행 — 공급국 후보 추정 불가";
+      autoDetectError = "분석 서버 연결 실패 — 공급국 후보 추정 불가";
     } else {
       Progress.update(`🔍 ${transit}의 수입 출처 탐색 중 (UN Comtrade)`);
       document.getElementById("summary-body").innerHTML = spinnerHTML(
@@ -11868,15 +11868,63 @@ window.addEventListener("DOMContentLoaded", () => {
       "[검증 권고]\n- 자료1\n- 자료2\n- 자료3\n" + (extra || "");
   }
 
+  var _healthSuccess = null;
+  var _healthSuccessAt = 0;
+
+  function gasRequest(action, params, body, options) {
+    options = options || {};
+    var signal = options.signal;
+    if (signal && signal.aborted) return Promise.reject(signal.reason || new DOMException('분석이 중단되었습니다.', 'AbortError'));
+    if (action === 'health' && _healthSuccess && Date.now() - _healthSuccessAt < 30000) {
+      return Promise.resolve(new Response(_healthSuccess, { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return new Promise(function(resolve, reject) {
+      var controller = new AbortController();
+      var settled = false;
+      var timeoutMs = action === 'health' ? 15000 : (action === 'gemini' ? 120000 : 90000);
+      var timer;
+      function cleanup() {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      }
+      function fail(error) {
+        if (settled) return;
+        settled = true; cleanup(); controller.abort(); reject(error);
+      }
+      function onAbort() {
+        fail(signal.reason || new DOMException('분석이 중단되었습니다.', 'AbortError'));
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      timer = setTimeout(function() {
+        fail(new DOMException('서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.', 'TimeoutError'));
+      }, timeoutMs);
+      _origFetch(PROXY_BASE, {
+        method: 'POST',
+        body: JSON.stringify({ action: action, params: params, body: body }),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        redirect: 'follow', signal: controller.signal
+      }).then(async function(r) {
+        if (!r.ok) throw new Error('서버 응답 오류 HTTP ' + r.status);
+        var t = await r.text();
+        var j;
+        try { j = JSON.parse(t); }
+        catch (e) { throw new Error('서버가 올바른 JSON을 반환하지 않았습니다. GAS 배포 URL과 접근 권한을 확인해 주세요.'); }
+        if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('서버 응답 형식이 올바르지 않습니다.');
+        if (action === 'health' && j.ok !== true) throw new Error('GAS 연결 확인 실패');
+        if (settled) return;
+        settled = true; cleanup();
+        if (action === 'health') { _healthSuccess = t; _healthSuccessAt = Date.now(); }
+        resolve(new Response(t, { status: j.success === false || j.error ? 500 : 200, headers: { 'Content-Type': 'application/json' } }));
+      }).catch(fail);
+    });
+  }
+
   function warmupGAS() {
     if (_healthWarmedUp) return;
     _healthWarmedUp = true;
-    _origFetch(PROXY_BASE, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'health' }),
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow'
-    }).then(r => r.text()).then(t => console.log('[웹앱 v8] GAS 워밍업:', t.substring(0, 80)))
-      .catch(e => console.log('[웹앱 v8] 워밍업 실패:', e));
+    gasRequest('health', {}, {}, {}).then(function(r) { return r.json(); })
+      .then(function() { console.log('[웹앱] GAS 실제 연결 확인 완료'); })
+      .catch(function(e) { console.warn('[웹앱] GAS 연결 확인 실패:', e.message); });
   }
 
   window.fetch = function(url, options) {
@@ -11896,8 +11944,7 @@ window.addEventListener("DOMContentLoaded", () => {
       if (query) query.split('&').forEach(function(p) { var e = p.indexOf('='); if (e > 0) params[decodeURIComponent(p.substring(0,e))] = decodeURIComponent(p.substring(e+1)); });
 
       if (endsWith(pathOnly, '/health') || endsWith(pathOnly, '/api/health')) {
-        warmupGAS();
-        return resolve(new Response(JSON.stringify({ ok: true, proxy: 'gas' }), { status: 200 }));
+        return gasRequest('health', {}, {}, options).then(resolve, reject);
       }
 
       var action = null;
@@ -11935,16 +11982,7 @@ window.addEventListener("DOMContentLoaded", () => {
         console.log('[웹앱 v8] Gemini 프롬프트 (' + prompt.length + '자)');
       }
 
-      _origFetch(PROXY_BASE, {
-        method: 'POST',
-        body: JSON.stringify({ action: action, params: params, body: body }),
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow'
-      }).then(r => r.text()).then(t => {
-        try {
-          var j = JSON.parse(t);
-          resolve(new Response(t, { status: j.success === false ? 500 : 200, headers: { 'Content-Type': 'application/json' } }));
-        } catch(e) { resolve(new Response(t, { status: 200 })); }
-      }).catch(err => reject(err));
+      gasRequest(action, params, body, options).then(resolve, reject);
     });
   }
 
