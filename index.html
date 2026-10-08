@@ -682,6 +682,15 @@
     .tariff-risk-compare { grid-template-columns: 1fr; }
     .tariff-risk-arrow { display: none; }
   }
+
+.psr-review-layout {display:grid;gap:12px;margin:20px 0;max-width:1100px;}
+.psr-review-decisions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+.psr-review-item {padding:16px 18px;border:1px solid #e1e6ed;border-radius:8px;background:#fff;}
+.psr-review-label {font-weight:700;color:#24364b;margin-bottom:8px;font-size:15px;}
+.psr-review-text {font-size:14px;line-height:1.85;color:#344054;overflow-wrap:anywhere;}
+.psr-review-priority {background:#fff8e8;border-color:#eedbb2;}
+.psr-review-evidence {background:#f6f8fb;}
+@media(max-width:700px){.psr-review-decisions{grid-template-columns:1fr;}.psr-review-item{padding:14px;}}
 </style>
 </head>
 <body>
@@ -4948,18 +4957,51 @@ function runPsrAnalysis(input) {
   };
 }
 
+function formatPsrReviewText(value) {
+  const clean = String(value || '').replace(/\*\*/g, '').trim();
+  return _safe(clean).replace(/\n/g, '<br>');
+}
+
+function parsePsrReviewFields(text) {
+  const labels = ['적용 기준', '근거 수준', '경로별 검토', '검증 우선도', '원산지 충족 여부', '우선 확인자료'];
+  const re = /(?:^|\n)\s*(?:[-*]\s*)?(?:\*\*)?(적용 기준|근거 수준|경로별 검토|검증 우선도|원산지 충족 여부|우선 확인자료)(?:\*\*)?\s*[:：]\s*/g;
+  const matches = [...String(text).matchAll(re)];
+  const fields = {};
+  matches.forEach((m, i) => {
+    const value = text.slice(m.index + m[0].length, i + 1 < matches.length ? matches[i+1].index : text.length).trim();
+    fields[m[1]] = fields[m[1]] ? fields[m[1]] + '\n' + value : value;
+  });
+  // Preserve unexpected preface and unstructured model output.
+  const preface = matches.length ? text.slice(0, matches[0].index).trim() : text.trim();
+  return {fields, preface};
+}
+
 function renderPsrAiReview() {
   const host = document.getElementById('psr-ai-review');
   if (!host) return;
   const ai = state.aiAnalysis;
   const text = ai && typeof ai.analysis === 'string' ? ai.analysis : '';
   const match = text.match(/PSR 검토 시작([\s\S]*?)PSR 검토 끝/);
-  let content;
-  if (match) content = `<div style="white-space:pre-wrap;line-height:1.8">${_safe(match[1].trim())}</div>`;
-  else if (text) content = 'PSR 검토 블록을 받지 못했습니다. AI 분석 시나리오 탭에서 전체 응답을 확인하세요.';
-  else if (ai && ai.error) content = 'AI 검토 결과를 받지 못했습니다. 기준 조회 결과는 유지됩니다. AI 분석 탭에서 오류를 확인하세요.';
-  else content = '전체 분석에서 AI 분석 시나리오 옵션을 선택하면 기준별 위험 신호·근거 수준·확인자료가 표시됩니다.';
-  host.innerHTML = `<h5>🔎 PSR 맞춤 검토</h5><div class="alert alert-light border">${content}</div><small class="text-muted">검증 우선도는 추가 확인의 필요성을 뜻합니다. 개별 물품의 원산지 판정에는 거래·생산 증빙이 필요합니다.</small>`;
+  if (!match) {
+    host.innerHTML = `<div class="alert alert-light border">${text ? 'AI 분석 탭에서 전체 검토 내용을 확인하세요.' : ai && ai.error ? 'AI 검토 결과를 받지 못했습니다. AI 분석 탭에서 오류를 확인하세요.' : 'AI 분석을 실행하면 기준별 검토 결과가 표시됩니다.'}</div>`;
+    return;
+  }
+  const {fields, preface} = parsePsrReviewFields(match[1].trim());
+  function section(title, value, tone) {
+    if (!value) return '';
+    return `<section class="psr-review-item ${tone || ''}"><div class="psr-review-label">${title}</div><div class="psr-review-text">${formatPsrReviewText(value)}</div></section>`;
+  }
+  const paths = (fields['경로별 검토'] || '').replace(/\s*(?=(?:[①②③④]|[1-4]호 경로|경로 [1-4]|선택지 [1-4]))/g, '\n').trim();
+  const documents = (fields['우선 확인자료'] || '').replace(/\s+(?=[1-9][.、)]\s)/g, '\n');
+  host.innerHTML = `<div class="psr-review-layout">
+    <div class="psr-review-decisions">${section('🔎 검증 우선도', fields['검증 우선도'], 'psr-review-priority')}${section('📋 원산지 충족 여부', fields['원산지 충족 여부'])}</div>
+    ${section('적용 기준', fields['적용 기준'])}
+    ${section('기준별 검토', paths)}
+    ${section('📁 우선 확인자료', documents)}
+    ${section('근거와 한계', fields['근거 수준'], 'psr-review-evidence')}
+    ${section('추가 검토', preface)}
+    <div class="text-muted small">검증 우선도는 추가 확인의 필요성을 뜻합니다. 원산지 판정에는 거래·생산 증빙이 필요합니다.</div>
+  </div>`;
 }
 
 function renderPsr(r) {
@@ -11946,7 +11988,7 @@ window.addEventListener("DOMContentLoaded", () => {
       "문장마다 필요한 곳에 근거 수준을 명시: 제공 기준자료 / 제공 통계 / 사용자 제공 / 산업 일반정보 / 분석 가정 / 미확인. 웹 검색 도구가 없으므로 이번 호출에서 검색·확인했다고 주장하거나 출처 URL·회사·금액을 생성하지 마세요. 공급망 후보는 확인된 해당 거래의 재료와 구분하세요.\n" +
       "TiVA·국가 산업비율·수입단가·BOM 표준비율은 참고치입니다. 실제 거래의 RVC·최소허용 비율로 대체하지 마세요. 재료 원산지·HS·가격과 완제품 가격 및 협정 산식이 확보될 때만 계산하며, 없으면 필요한 값과 산식을 설명하세요. 동일 재료의 조달국이 회원국이어도 원산지 자격·누적 요건 확인 없이 역내산으로 합산하지 마세요. 수치 없는 위험 확률·고정 점수는 만들지 마세요.\n" +
       "검증 우선도(높음/보통/낮음/판단 유보)와 원산지 충족 여부(충족/불충족/판정 유보)를 별도로 설명하세요. 통계·산업정보만 있으면 개별 물품 충족 여부는 판정 유보이며, 조건부 시나리오는 조건을 명시하세요.\n" +
-      "종합 판단 섹션 끝에 다음 텍스트 블록을 반드시 포함하세요(대괄호를 쓰지 마세요):\nPSR 검토 시작\n적용 기준: ...\n근거 수준: ...\n경로별 검토: 각 OR/AND 경로의 조건·위험 신호·미확인 사항\n검증 우선도: ... — 이유\n원산지 충족 여부: ... — 근거와 한계\n우선 확인자료: 구체적 재료·공정별 자료 3개\nPSR 검토 끝\n\n";
+      "종합 판단 섹션 끝에 다음 텍스트 블록을 반드시 포함하세요(대괄호를 쓰지 마세요):\nPSR 검토 시작\n적용 기준: ...\n근거 수준: ...\n경로별 검토: 각 경로를 줄바꿈하고 경로 1, 경로 2로 시작. 각 경로는 조건·위험 신호·미확인 사항을 간결히 설명\n검증 우선도: ... — 이유\n원산지 충족 여부: ... — 근거와 한계\n우선 확인자료: 구체적 재료·공정별 자료 3개\nPSR 검토 끝\n\n";
 
     return "다음은 한국으로 수입되는 물품의 원산지 분석 데이터입니다.\n\n" +
       "【원산지 정보 해석 규칙】\n" + originRules + "\n\n" + psrRules +
