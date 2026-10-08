@@ -786,17 +786,17 @@
   <!-- 탭 네비게이션 -->
   <ul class="nav nav-tabs" id="mainTabs" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-summary">📊 종합 보고서</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-psr">1. PSR 위험</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-rvc">2. 부가가치</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tariff">3. 세율차</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-bom">4. BOM 분석</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-production">5. 생산 역량</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-supplychain">6. 공급망</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-laundering">7. 원산지 세탁</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cases">8. 위반사례·체크리스트</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-psr">📋 PSR 위험</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-rvc">💰 부가가치</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tariff">⚖️ 세율차</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-bom">🧩 BOM 분석</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-production">🏭 생산 역량</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-supplychain">🌐 공급망</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-laundering">🔍 원산지 세탁</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cases">📚 위반사례·체크리스트</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ai">🤖 AI 분석 시나리오</button></li>
-    <li class="nav-item" id="tab-cbp-nav"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cbp">9. CBP</button></li>
-    <li class="nav-item" id="tab-uspolicy-nav" style="display:none;"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-uspolicy">10. 美정책</button></li>
+    <li class="nav-item" id="tab-cbp-nav"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cbp">🇺🇸 CBP</button></li>
+    <li class="nav-item" id="tab-uspolicy-nav" style="display:none;"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-uspolicy">🏛️ 美정책</button></li>
   </ul>
 
   <div class="tab-content">
@@ -8398,6 +8398,26 @@ function evaluateMultiAngles(input, R) {
   return angles;
 }
 
+function renderDomesticCasesSummary(result) {
+  const loaded = !!(window.__CASES_DATA__ && Array.isArray(window.__CASES_DATA__.cases));
+  if (!loaded) return '<div class="alert alert-warning mb-0">国内 사례 자료를 불러오지 못했습니다. 새로고침 후 다시 분석해 주세요.</div>'.replace('国内', '국내');
+  if (!result || result.status !== 'ok') return '<p class="text-muted mb-0">국내 사례 매칭 결과가 없습니다. HS·협정 입력 후 다시 분석해 주세요.</p>';
+  const cases = Array.isArray(result.similarCases) ? result.similarCases : [];
+  const note = '<div class="small text-muted mt-2">HS·FTA·PSR 기준 참고 매칭이며, 현재 물품의 위반 여부를 확정하는 결과는 아닙니다.</div>';
+  if (!cases.length) return '<p class="mb-0">등록된 국내 사례 중 현재 입력 조건에 매칭되는 사례가 없습니다.</p>' + note;
+  const cards = cases.slice(0, 3).map(c => {
+    const violation = String(c.violation || '위반사항 상세는 위반사례·체크리스트 탭 참조');
+    return `<div class="border-bottom py-2">
+      <b>사례 #${_safe(String(c.case_no ?? ''))} · ${_safe(c.name || '품명 미상')}</b>
+      <div class="small text-muted">HS ${_safe(c.hs || '')} · ${_safe(c.fta || '')}</div>
+      <div class="small mt-1"><b>위반사항:</b> ${_safe(violation.slice(0, 160))}${violation.length > 160 ? '…' : ''}</div>
+      <div class="small text-muted mt-1">매칭 근거: ${_safe((c.matchReasons || []).join(', '))}</div>
+    </div>`;
+  }).join('');
+  return `<p class="mb-1">국내 참고 사례 ${cases.length}건 매칭 · 상위 ${Math.min(3, cases.length)}건 요약</p>${cards}${note}
+    <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="bootstrap.Tab.getOrCreateInstance(document.querySelector('[data-bs-target=\"#tab-cases\"]')).show()">📚 위반사례·체크리스트에서 상세 보기</button>`;
+}
+
 function runCasesAnalysis(input) {
   const { hs, origin, transit, fta, name } = input;
   if (!hs && !name) return { status: "na", reason: "HS 코드 또는 품명 필요" };
@@ -9433,7 +9453,7 @@ function renderSummary() {
     ${section("6. PSR 구조적 위험 평가", psrMatrix)}
 
     ${section("7. 유사 위반사례",
-      `<div class="alert alert-warning">🚧 국내 위반사례(2021) DB 연동 후 제공 예정 (Phase 2)</div>`)}
+      renderDomesticCasesSummary(R.cases))}
 
     ${i.optCbp || i.optUsPolicy ? section("8. 🇺🇸 미국 수출 리스크",
       (i.optCbp ? `<p><strong>CBP 판례:</strong> 별도 탭 참조 — 수동 조회 필요</p>` : '') +
