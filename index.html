@@ -857,12 +857,12 @@
       <div id="production-body">
         <div class="pending-box"><div class="icon">⏳</div>HS + 수출국 입력 후 분석 실행</div>
       </div>
-      <details class="card mt-4" id="production-country-indicators">
-        <summary class="card-header">📊 국가별 경제·산업 지표 비교 <span class="badge bg-secondary badge-status ms-2" id="status-supplychain">대기</span></summary>
+      <div class="card mt-4" id="production-country-indicators">
+        <div class="card-header">📊 국가별 경제·산업 지표 비교 <span class="badge bg-secondary badge-status ms-2" id="status-supplychain">대기</span></div>
         <div class="card-body" id="supplychain-body">
           <div class="pending-box"><div class="icon">⏳</div>입력 후 분석 실행</div>
         </div>
-      </details>
+      </div>
     </div>
 
     <!-- 탭8: 세탁 -->
@@ -1725,25 +1725,20 @@ function evaluatePsrFramework(input, R) {
       }
     });
 
-    // mode 위험도 계산: fail → 가중 큰 가산, warn → 작은 가산, ok → 감산
     const counts = { ok: 0, warn: 0, fail: 0, unknown: 0 };
     checks.forEach(c => counts[c.status]++);
     const evaluable = counts.ok + counts.warn + counts.fail;
-    let confidence = 0;
-    if (evaluable > 0) {
-      confidence = ((counts.fail * 100 + counts.warn * 50) / evaluable);
-    }
     return {
       ...mode,
       checks,
       counts,
       evaluable,
-      confidence: +confidence.toFixed(0),
+      attentionCount: counts.fail + counts.warn,
     };
   });
 
-  // 정렬: 신뢰도 내림차순
-  modes.sort((a, b) => b.confidence - a.confidence);
+  // 검토할 신호 건수 순서. 위반 확률·신뢰도 계산 아님.
+  modes.sort((a, b) => b.attentionCount - a.attentionCount);
 
   return {
     psrKey,
@@ -7650,17 +7645,13 @@ function runCasesAnalysis(input) {
 
   const productName = name || (state.results?.tariff?.name) || "";
 
-  // 5) 종합 위험도 — PSR + 다각도 + 사례 매칭 종합
-  const topModeConfidence = psrEval.modes[0]?.confidence || 0;
-  const totalFails = angles.reduce((s, a) => s + a.signals.filter(x => x.status === "fail").length, 0);
-  const totalWarns = angles.reduce((s, a) => s + a.signals.filter(x => x.status === "warn").length, 0);
-  const exactCaseMatch = similarCases.filter(c => c.matchScore >= 10).length;
-  const closeCaseMatch = similarCases.filter(c => c.matchScore >= 7).length;
-
-  let risk = "low";
-  if (topModeConfidence >= 60 || totalFails >= 3 || exactCaseMatch >= 1) risk = "high";
-  else if (topModeConfidence >= 30 || totalFails >= 1 || totalWarns >= 4 || closeCaseMatch >= 1) risk = "mid";
-
+  const checklistCounts = {ok:0,warn:0,fail:0,unknown:0};
+  psrEval.modes.forEach(m => Object.keys(checklistCounts).forEach(k => checklistCounts[k] += m.counts[k] || 0));
+  const totalFails = angles.reduce((n,a)=>n+a.signals.filter(x=>x.status==='fail').length,0);
+  const totalWarns = angles.reduce((n,a)=>n+a.signals.filter(x=>x.status==='warn').length,0);
+  const exactCaseMatch = similarCases.filter(c=>c.matchScore>=10).length;
+  const closeCaseMatch = similarCases.filter(c=>c.matchScore>=7).length;
+  const risk = 'pending';
   return {
     status: "ok",
     hs, origin, transit, fta, productName,
@@ -7668,7 +7659,7 @@ function runCasesAnalysis(input) {
     angles,
     similarCases,
     risk,
-    topModeConfidence,
+    checklistCounts,
     totalFails, totalWarns,
     exactCaseMatch, closeCaseMatch,
   };
@@ -7698,10 +7689,10 @@ function renderCases(r) {
   let psrSection = "";
   if (psr && psr.psrKey) {
     const modeCards = psr.modes.map(mode => {
-      const conf = mode.confidence;
-      const sevColor = conf >= 60 ? '#c0392b' : conf >= 30 ? '#f59f00' : '#2e7d4a';
-      const sevBadge = conf >= 60 ? 'bg-danger' : conf >= 30 ? 'bg-warning' : 'bg-success';
-      const sevLabel = conf >= 60 ? '🔴 강력 의심' : conf >= 30 ? '🟡 모니터링' : '🟢 정상';
+      const attention = mode.counts.fail + mode.counts.warn;
+      const sevColor = attention ? '#f59f00' : '#6c757d';
+      const sevBadge = attention ? 'bg-warning text-dark' : 'bg-secondary';
+      const sevLabel = '통계·규칙상 주의 신호 ' + attention + '건';
 
       const checkRows = mode.checks.map(c => `
         <tr style="${statusBg(c.status)}">
@@ -7726,7 +7717,7 @@ function renderCases(r) {
               <h6 class="mb-0">${mode.name}</h6>
               <div>
                 <span class="badge ${sevBadge}">${sevLabel}</span>
-                <span class="badge bg-secondary ms-1">신뢰도 ${conf}%</span>
+                <span class="badge bg-secondary ms-1">평가 가능 ${mode.evaluable}개 · 미확인 ${mode.counts.unknown}개</span>
               </div>
             </div>
             <p class="mb-2"><small class="text-muted">${mode.description}</small></p>
@@ -7795,30 +7786,27 @@ function renderCases(r) {
 
   body.innerHTML = `
     <div class="row g-3 mb-3">
-      <div class="col-md-3"><div class="metric-card">
+      <div class="col-md-4"><div class="metric-card">
         <div class="label">PSR 기준</div>
         <div class="value" style="font-size:1.05rem; line-height:1.2">${psr?.psrName || '—'}</div>
         <div class="sub">${psr?.modes?.length ? psr.modes.length + '개 위반 시나리오' : 'PSR 매칭 필요'}</div>
       </div></div>
-      <div class="col-md-3"><div class="metric-card">
-        <div class="label">최고 시나리오 신뢰도</div>
-        <div class="value risk-${r.topModeConfidence >= 60 ? 'high' : r.topModeConfidence >= 30 ? 'mid' : 'low'}">${r.topModeConfidence}%</div>
-        <div class="sub">${psr?.modes?.[0]?.name || '—'}</div>
+      <div class="col-md-4"><div class="metric-card">
+        <div class="label">체크리스트 검토 결과</div>
+        <div class="value" style="font-size:1.1rem">주의 신호 ${(r.checklistCounts?.fail || 0) + (r.checklistCounts?.warn || 0)}건</div>
+        <div class="sub">평가 가능 ${(r.checklistCounts?.ok || 0)+(r.checklistCounts?.warn || 0)+(r.checklistCounts?.fail || 0)}개 · 미확인 ${r.checklistCounts?.unknown || 0}개</div>
       </div></div>
-      <div class="col-md-3"><div class="metric-card">
+      <div class="col-md-4"><div class="metric-card">
         <div class="label">유사 사례 매칭</div>
         <div class="value">
           ${(r.similarCases || []).length > 0 ? `<span style="color:${r.exactCaseMatch >= 1 ? '#c0392b' : r.closeCaseMatch >= 1 ? '#f59f00' : '#1a3a6b'}">${(r.similarCases || []).length}건</span>` : '0건'}
         </div>
         <div class="sub">정확 ${r.exactCaseMatch || 0} / 유사 ${r.closeCaseMatch || 0}</div>
       </div></div>
-      <div class="col-md-3"><div class="metric-card">
-        <div class="label">종합 위험도</div>
-        <div class="value">${r.risk === "high" ? "🔴 높음" : r.risk === "mid" ? "🟡 보통" : "🟢 낮음"}</div>
-        <div class="sub">PSR + 다각도</div>
-      </div></div>
+
     </div>
 
+    <p class="note">주의 신호는 자동 체크 조건에 해당한 항목 수이며 위반 확률이나 원산지 불충족 판정이 아닙니다. 미확인 항목은 정상으로 취급하지 않습니다.</p>
     <h5 class="mt-3">📋 ${psr?.psrName || 'PSR'} 기반 위반 시나리오 체크리스트</h5>
     ${psrSection}
 
@@ -7881,7 +7869,7 @@ function renderCases(r) {
       </small>
     </div>`;
 
-  setStatus("cases", r.risk === "high" ? "고위험" : r.risk === "mid" ? "보통" : "낮음", "bg-" + (r.risk === "high" ? "danger" : r.risk === "mid" ? "warning" : "success"));
+  setStatus("cases", "체크리스트 검토", "bg-secondary");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8280,7 +8268,7 @@ function renderSummary() {
   const R = state.results;
 
   // 위험도 점수 계산 (가중치 × 탭별 risk) — BOM 비관련 시 가중치 자동 감소
-  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
+  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0, bom: 0.04 };
   const riskScore = { high: 100, mid: 50, low: 10 };
   let totalScore = 0, totalWeight = 0;
   for (const [key, weight] of Object.entries(weights)) {
@@ -8628,7 +8616,7 @@ function renderSummary() {
 function buildReportData() {
   const i = state.input;
   const R = state.results;
-  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
+  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0, bom: 0.04 };
   const riskScore = { high: 100, mid: 50, low: 10 };
   let totalScore = 0, totalWeight = 0;
   const contributingTabs = [];
