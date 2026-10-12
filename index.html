@@ -6572,18 +6572,18 @@ function renderRvc(r) {
 
     ${r.tivaBenchmark ? `
       <div class="alert alert-info mt-3" style="border-left:4px solid #0d6efd;">
-        <strong>🌐 OECD TiVA 부가가치 벤치마크 (실시간)</strong>
-        <div class="mt-1"><small>국가×산업별 평균 부가가치 비중 — RVC 신고값의 합리성 검증</small></div>
+        <strong>🌐 OECD TiVA 산업 부가가치 참고지표</strong>
+        <div class="mt-1"><small>국가·산업 수출에 포함된 국내·해외 부가가치 비중 — 해당 거래의 원산지 판정과 구분</small></div>
       </div>
       <table class="table table-sm table-bordered">
         <thead><tr><th>지표</th><th>값</th><th>의미</th></tr></thead>
         <tbody>
           <tr class="key-row"><td><strong>국내부가가치(DVA) 비중</strong></td>
               <td><strong>${r.tivaBenchmark.dvash !== null ? r.tivaBenchmark.dvash.toFixed(1) + '%' : '—'}</strong></td>
-              <td><small>${r.origin}의 ${r.hs6.slice(0,2)}류 산업 평균 — RVC 신고 적정성 핵심 기준</small></td></tr>
-          <tr><td>외국부가가치(FVA) 비중</td>
+              <td><small>해당 국가의 국내 생산·공급 과정에서 발생한 가치의 비중 (개별 거래 RVC와 다름)</small></td></tr>
+          <tr><td><strong>해외 부가가치 비중 (FVA)</strong></td>
               <td>${r.tivaBenchmark.fvash !== null ? r.tivaBenchmark.fvash.toFixed(1) + '%' : '—'}</td>
-              <td><small>수입중간재 의존도 (높을수록 비원산지 ↑)</small></td></tr>
+              <td><small>해당 산업 수출액 중 해외에서 발생한 가치의 비중. 원료·부품·서비스의 직접·간접 기여 포함</small></td></tr>
           <tr><td>후방참여(BWFVA)</td>
               <td>${r.tivaBenchmark.bwfva !== null ? r.tivaBenchmark.bwfva.toFixed(1) : '—'}</td>
               <td><small>외국 중간재 사용 정도</small></td></tr>
@@ -6592,6 +6592,13 @@ function renderRvc(r) {
               <td><small>높을수록 가공무역·환적 가능성 ↑</small></td></tr>
         </tbody>
       </table>
+
+      <div class="alert alert-light border">
+        <strong>💡 FVA는 무엇인가요?</strong>
+        <p class="mt-2 mb-2">FVA가 20%라면 해당 국가·산업의 수출액 100달러 중 약 20달러는 해외에서 발생한 부가가치라는 뜻입니다. 특정 제품의 수입 원단 비율이나 공장 가공비를 뜻하지 않습니다.</p>
+        <p class="mb-2"><strong>검증에 어떻게 참고하나요?</strong> 수치가 높으면 해외 투입 의존도가 큰 산업으로 볼 수 있어, 부가가치 기준 적용 시 주요 재료의 원산지·가격·누적 적용 여부를 우선 확인하는 참고자료로 활용합니다.</p>
+        <p class="mb-0 text-muted">국가·산업 전체의 통계이며 개별 물품의 FTA RVC나 비원산지재료 비율이 아닙니다. 해외산과 협정상 비원산지는 같지 않으며, 세번변경·특정공정 충족 여부는 재료 HS와 실제 공정을 별도로 확인해야 합니다.</p>
+      </div>
 
       ${r.tivaBenchmark.warning ? `
         <div class="alert ${r.tivaBenchmark.warning.startsWith('🔴') ? 'alert-danger' : r.tivaBenchmark.warning.startsWith('🟡') ? 'alert-warning' : 'alert-success'} mt-2">
@@ -6607,7 +6614,7 @@ function renderRvc(r) {
         </div>` : ''}
     ` : `
       <div class="alert alert-secondary mt-3">
-        <small>OECD TiVA 데이터 미연결 (proxy 미실행 또는 비OECD 국가) — 외국 산업 비교 생략됨.</small>
+        <small>OECD TiVA 조회 결과가 없습니다. 연결 상태 또는 해당 국가·산업·연도의 데이터 제공 여부를 확인하세요.</small>
       </div>
     `}
 
