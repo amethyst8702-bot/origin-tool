@@ -876,6 +876,7 @@
         <h3 class="title">7. 무역흐름 비교 — 국가별 수입 추이·거래 규모</h3>
         <span class="badge bg-secondary badge-status" id="status-laundering">대기</span>
       </div>
+      <div id="trade-trend-progress" class="small text-muted mb-3">조회하는 해의 직전 3개년을 자동 비교합니다.</div>
       <div id="laundering-body">
         <div class="pending-box"><div class="icon">⏳</div>HS + 경유국 입력 후 분석 실행</div>
       </div>
@@ -2652,6 +2653,41 @@ async function callComtradeTradeFlow(origin, transit, hs, year) {
   }
 }
 
+function tradeTrendYears() {
+  const referenceYear = new Date().getFullYear();
+  return [referenceYear - 3, referenceYear - 2, referenceYear - 1];
+}
+async function callComtradeTradeTrend(origin, transit, hs) {
+  const inputRef = state.input;
+  const years = tradeTrendYears();
+  const anchorYear = years[1];
+  const annual = {};
+  const publish = pending => {
+    if (state.input !== inputRef) return;
+    const anchor = annual[anchorYear] || {};
+    inputRef.comtradeData = Object.assign({}, anchor, { annual_flows: annual, trend_years: years, reference_year: years[2]+1 });
+    inputRef.comtradePending = pending;
+    state.results.laundering = runLaunderingAnalysis(inputRef);
+    renderLaundering(state.results.laundering);
+  };
+  publish(true);
+  try {
+    for (let idx=0; idx<years.length; idx++) {
+      _checkCancel();
+      if (state.input !== inputRef) throw new Error('조회 입력 변경으로 중단');
+      const year=years[idx];
+      const status=document.getElementById('trade-trend-progress');
+      if (status) status.textContent = year + '년 조회 중 (' + (idx+1) + '/' + years.length + ')';
+      annual[year] = await callComtradeTradeFlow(origin,transit,hs,year);
+      _checkCancel();
+      publish(idx < years.length-1);
+      if (idx < years.length-1) await new Promise(resolve=>setTimeout(resolve,1500));
+    }
+    return inputRef.comtradeData;
+  } finally {
+    if (state.input === inputRef) publish(false);
+  }
+}
 // Comtrade 무역통계를 총액(USD)으로 집계
 function sumComtradeValue(data) {
   if (!data || !data.data || !Array.isArray(data.data)) return 0;
@@ -3479,7 +3515,7 @@ async function _runAllAnalysesInternal() {
       renderLaundering(runLaunderingAnalysis(state.input));
       const hs6 = hs.slice(0, 6);
       apiPromises.push(
-        callComtradeTradeFlow(origin, transit, hs6, 2023).then(data => {
+        callComtradeTradeTrend(origin, transit, hs6).then(data => {
           state.input.comtradeData = data;
           // 탭 재렌더 (산업 프로파일과 합쳐 종합 분석)
           state.results.production = runProductionAnalysis(state.input);
@@ -5359,7 +5395,8 @@ function runProductionAnalysis(input) {
     result.transitExportToWorld = sumComtradeValue(cd.transit_to_world);
     result.transitExportToKorea = sumComtradeValue(cd.transit_to_korea);
     result.needsExternal = false;
-    result.note = "UN Comtrade + 산업 프로파일 실시간 데이터 기반.";
+    result.comtradeYear = cd.year;
+    result.note = "UN Comtrade " + cd.year + "년 + 산업 프로파일 데이터 기반.";
     // 미스매치 판정: 경유국의 한국 수출이 전세계 수출의 상당 비율이면 의심
     if (result.transitExportToWorld > 0) {
       result.transitToKoreaShare = (result.transitExportToKorea / result.transitExportToWorld * 100).toFixed(1);
@@ -5581,7 +5618,7 @@ function renderProduction(r) {
     <div class="alert alert-success mb-3">
       <strong>✓ UN Comtrade 실시간 데이터 연동</strong> — 수출국·경유국의 실제 글로벌 무역 실적 확인
     </div>
-    <h6 class="mt-3">📊 수출국 글로벌 수출 vs 경유국 글로벌 수출 (2023, $)</h6>
+    <h6 class="mt-3">📊 수출국 글로벌 수출 vs 경유국 글로벌 수출 (${_safe(r.comtradeYear || "연도 미확인")}, $)</h6>
     <table class="table table-sm table-bordered">
       <thead><tr><th>구분</th><th>${r.origin} (원산지국)</th><th>경유국</th></tr></thead>
       <tbody>
@@ -5922,6 +5959,8 @@ async function callGeminiAnalysis() {
       transit_korea_share: R.production?.transitToKoreaShare,
     },
     external: {
+      trade_flow_trend: state.input.comtradeData?.annual_flows || null,
+      trade_flow_years: R.laundering?.years || null,
       tiva_dva: R.rvc?.tivaBenchmark?.dvash,
       tiva_fva: R.rvc?.tivaBenchmark?.fvash,
       kosis_avg: R.rvc?.koreaBenchmark?.ratio,
@@ -6212,9 +6251,9 @@ function renderSupplychain(r) {
 function runLaunderingAnalysis(input) {
   const { hs, origin, transit } = input;
   if (!hs || !origin || !transit) return { status: 'na', reason: 'HS·원산지 후보국·경유국 입력이 필요합니다.' };
-  const hs6 = hs.slice(0, 6), years = [2022, 2023, 2024];
+  const hs6 = hs.slice(0, 6), years = input.comtradeData?.trend_years || tradeTrendYears();
   const collect = country => {
-    const values = { 2022: null, 2023: null, 2024: null };
+    const values = Object.fromEntries(years.map(year=>[year,null]));
     for (const row of (state.importData || [])) {
       if (String(row['품목번호 6단위'] || '').trim().slice(0, 6) !== hs6
           || String(row['수출국'] || '').trim() !== country) continue;
@@ -6226,8 +6265,9 @@ function runLaunderingAnalysis(input) {
     return values;
   };
   const originImport = collect(origin), transitImport = collect(transit);
-  const growth = values => values[2022] !== null && values[2022] > 0 && values[2024] !== null
-    ? (values[2024] - values[2022]) / values[2022] * 100 : null;
+  const firstYear=years[0], lastYear=years[2];
+  const growth = values => values[firstYear] !== null && values[firstYear] > 0 && values[lastYear] !== null
+    ? (values[lastYear] - values[firstYear]) / values[firstYear] * 100 : null;
   const cd = input.comtradeData, queries = {};
   ['origin_to_transit', 'transit_to_korea', 'origin_to_world', 'transit_to_world'].forEach(key => {
     queries[key] = cd?.query_status?.[key] || {
@@ -6239,7 +6279,7 @@ function runLaunderingAnalysis(input) {
     status: 'ok', hs6, origin, transit, originImport, transitImport,
     originGrowth: growth(originImport), transitGrowth: growth(transitImport),
     risk: 'na', pattern: '무역통계 참고자료 · 원산지 판정 제외',
-    queries, comtradeYear: cd?.year || '2023',
+    queries, years, referenceYear: years[2]+1, annualFlows: cd?.annual_flows || {}, comtradePending: !!input.comtradePending, comtradeYear: cd?.year || String(years[1]),
     note: '국가 간 거래가 존재해도 동일 물품의 경유·재수출이나 원산지 변경을 입증하지 않습니다.'
   };
 }
@@ -6248,32 +6288,50 @@ function renderLaundering(r) {
   const body = document.getElementById('laundering-body');
   if (r.status === 'na') { body.innerHTML = naBox(r.reason); setStatus('laundering', '입력 확인', 'bg-secondary'); return; }
   const money = v => v === null || v === undefined ? '자료 없음' : Number(v).toLocaleString();
-  const change = (values, v) => v !== null ? (v >= 0 ? '+' : '') + v.toFixed(1) + '%'
-    : values[2022] === 0 ? '기준연도 0 · 계산 불가' : '연도 자료 부족 · 계산 불가';
-  const labels = { origin_to_transit: r.origin + ' → ' + r.transit, transit_to_korea: r.transit + ' → 한국', origin_to_world: r.origin + ' → 세계', transit_to_world: r.transit + ' → 세계' };
-  const queryRows = Object.entries(labels).map(([key, label]) => {
-    const q = r.queries[key], ok = q.status === 'ok';
-    const labelText = ok ? '조회 성공' : q.status === 'pending' ? '조회 중' : q.status === 'no_data' ? '자료 없음' : '조회 실패';
-    return '<tr><td>' + _safe(label) + '</td><td class="text-end">' + (ok ? money(q.total_usd) : '—') + '</td><td><span class="badge ' + (ok ? 'bg-success' : q.status === 'pending' ? 'bg-secondary' : 'bg-warning text-dark') + '">' + labelText + '</span><div class="small text-muted">' + _safe(q.message || '') + (q.http_status ? ' · HTTP ' + q.http_status : '') + (q.cached ? ' · 캐시' : '') + '</div></td></tr>';
+  const firstYear=r.years[0],lastYear=r.years[2];
+  const change = (values,v) => v !== null ? (v>=0?'+':'')+v.toFixed(1)+'%'
+    : values[firstYear]===0 ? '기준연도 0 · 계산 불가' : '연도 자료 부족 · 계산 불가';
+  const labels={origin_to_transit:r.origin+' → '+r.transit,transit_to_korea:r.transit+' → 한국',origin_to_world:r.origin+' → 세계',transit_to_world:r.transit+' → 세계'};
+  const query = (year,key) => {
+    const entry=r.annualFlows[year];
+    return entry?.query_status?.[key] || {
+      status:r.comtradePending && !entry ? 'pending':'error',
+      message:entry?.error || (r.comtradePending && !entry ? '조회 대기':'구간별 응답 미확인. GAS 배포 버전 확인 필요')
+    };
+  };
+  const allQueries=r.years.flatMap(year=>Object.keys(labels).map(key=>query(year,key)));
+  const failures=allQueries.filter(q=>q.status!=='ok'&&q.status!=='pending').length;
+  const pending=allQueries.filter(q=>q.status==='pending').length;
+  const cell=q=>{
+    const ok=q.status==='ok';
+    const label=ok?'조회 성공':q.status==='pending'?'조회 중':q.status==='no_data'?'자료 없음':'조회 실패';
+    return '<td class="text-end"><b>'+(ok?money(q.total_usd):'—')+'</b><div><span class="badge '+(ok?'bg-success':q.status==='pending'?'bg-secondary':'bg-warning text-dark')+'">'+label+'</span></div><div class="small text-muted">'+_safe(q.message||'')+(q.http_status?' · HTTP '+q.http_status:'')+(q.cached?' · 캐시':'')+'</div></td>';
+  };
+  const queryRows=Object.entries(labels).map(([key,label])=>{
+    const first=query(firstYear,key),last=query(lastYear,key);
+    const valid=first.status==='ok'&&last.status==='ok'&&first.total_usd>0;
+    const growth=valid?(last.total_usd-first.total_usd)/first.total_usd*100:null;
+    return '<tr><td>'+_safe(label)+'</td>'+r.years.map(year=>cell(query(year,key))).join('')+'<td class="text-end">'+(growth!==null?(growth>=0?'+':'')+growth.toFixed(1)+'%':first.status==='ok'&&first.total_usd===0?'기준연도 0':'계산 불가')+'</td></tr>';
   }).join('');
-  const failures = Object.values(r.queries).filter(q => q.status !== 'ok' && q.status !== 'pending').length;
-  const metrics = [[r.origin,r.originImport,r.originGrowth],[r.transit,r.transitImport,r.transitGrowth]].map(([country,values,g]) =>
-    '<div class="col-md-6"><div class="metric-card"><div class="label">' + _safe(country) + ' → 한국 수입금액 증감</div><div class="value" style="font-size:1.2rem">' + change(values,g) + '</div><div class="sub">2022년 대비 2024년 · 업로드 한국 수입통계</div></div></div>').join('');
-  const yearly = [[r.origin,r.originImport],[r.transit,r.transitImport]].map(([country,values]) => '<tr><td>' + _safe(country) + ' → 한국</td>' + [2022,2023,2024].map(y => '<td class="text-end">' + money(values[y]) + '</td>').join('') + '</tr>').join('');
+  const metrics=[[r.origin,r.originImport,r.originGrowth],[r.transit,r.transitImport,r.transitGrowth]].map(([country,values,g])=>
+    '<div class="col-md-6"><div class="metric-card"><div class="label">'+_safe(country)+' → 한국 수입금액 증감</div><div class="value" style="font-size:1.2rem">'+change(values,g)+'</div><div class="sub">'+firstYear+'년 대비 '+lastYear+'년 · 업로드 한국 수입통계</div></div></div>').join('');
+  const yearly=[[r.origin,r.originImport],[r.transit,r.transitImport]].map(([country,values])=>'<tr><td>'+_safe(country)+' → 한국</td>'+r.years.map(year=>'<td class="text-end">'+money(values[year])+'</td>').join('')+'</tr>').join('');
   body.innerHTML =
     '<div class="alert alert-info"><b>무엇을 비교하나요?</b> 국가별 한국 수입 추이와 국가 간 수출금액을 비교합니다. 입력한 원산지는 후보·가정이며 실제 생산국을 입증한 정보가 아닙니다.</div>' +
     '<div class="row g-3 mb-3">' + metrics + '</div>' +
     '<h6>① 국가별 한국 수입 추이 <small class="text-muted">HS ' + _safe(r.hs6) + ' · 천 달러</small></h6>' +
-    '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>수출국 → 한국</th><th>2022</th><th>2023</th><th>2024</th></tr></thead><tbody>' + yearly + '</tbody></table></div>' +
-    '<h6>② 국가 간 수출금액 <small class="text-muted">UN Comtrade · ' + _safe(r.comtradeYear) + '년 · HS ' + _safe(r.hs6) + ' · 달러</small></h6>' +
+    '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>수출국 → 한국</th>' + r.years.map(year=>'<th>'+year+'년 수입금액</th>').join('') + '</tr></thead><tbody>' + yearly + '</tbody></table></div>' +
+    '<h6>② 국가 간 수출금액 <small class="text-muted">UN Comtrade · ' + r.years[0] + '–' + r.years[2] + '년 · HS ' + _safe(r.hs6) + ' · 달러</small></h6>' +
     (failures ? '<div class="alert alert-warning">일부 구간의 조회 실패 또는 자료 부재가 있습니다. 표시되지 않은 금액은 0달러를 의미하지 않습니다.</div>' : '') +
-    '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>구간</th><th>수출금액(USD)</th><th>조회 상태</th></tr></thead><tbody>' + queryRows + '</tbody></table></div>' +
+    '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>구간</th>' + r.years.map(year=>'<th>'+year+'년 수출금액</th>').join('') + '<th>증감률(' + firstYear + '→' + lastYear + ')</th></tr></thead><tbody>' + queryRows + '</tbody></table></div>' +
     '<div class="card mt-3"><div class="card-body"><h6>계산식·해석 기준</h6>' +
-    '<p class="small mb-2"><b>수입 증감률</b> = (2024년 금액 − 2022년 금액) ÷ 2022년 금액 × 100. 기준연도 0 또는 양 끝 연도 자료가 없으면 계산하지 않습니다. 통계 기록이 없는 연도는 자료 없음으로 표시합니다.</p>' +
-    '<p class="small mb-2"><b>Comtrade 조회</b>: 연간 상품무역, HS 6단위, 수출(X), 상대국별 총액 조건. HTTP 200·요청 조건 일치·유효 금액·단일 집계 행을 확인한 구간만 표시합니다. 두 표는 연도·보고국·금액 평가 방식이 달라 직접 합산하지 않습니다.</p>' +
+    '<p class="small mb-2"><b>수입 증감률</b> = (' + lastYear + '년 금액 − ' + firstYear + '년 금액) ÷ ' + firstYear + '년 금액 × 100. 기준연도 0 또는 양 끝 연도 자료가 없으면 계산하지 않습니다. 통계 기록이 없는 연도는 자료 없음으로 표시합니다.</p>' +
+    '<p class="small mb-2"><b>Comtrade 조회</b>: 연간 상품무역, HS 6단위, 수출(X), 상대국별 총액 조건. HTTP 200·요청 조건 일치·유효 금액·단일 집계 행을 확인한 구간만 표시합니다. 두 표는 보고국·금액 평가 방식 및 단위가 달라 직접 합산하지 않습니다. 기준연도 직전 3개년을 조회하며 미발표·미수록 연도는 자료 없음으로 표시합니다.</p>' +
     '<p class="small mb-0"><b>판정 기준</b>: 증가·감소는 통계적 변화입니다. 기존 30%·50% 증가 또는 두 구간 금액 2배 기준의 세탁 위험 자동 판정은 사용하지 않습니다. 이 탭은 종합 위험점수에 반영하지 않습니다.</p></div></div>' +
     '<div class="alert alert-secondary mt-3"><b>추가 확인</b>: 거래당사자·운송서류로 구간 연결성을 확인하고, BOM·재료 원산지·생산공정 기록으로 PSR 충족 여부를 검토하세요.<br><small>' + _safe(r.note) + '</small></div>';
-  setStatus('laundering', failures ? '일부 조회 미확인' : Object.values(r.queries).some(q => q.status === 'pending') ? '조회 중' : '통계 조회 완료', failures ? 'bg-warning text-dark' : 'bg-secondary');
+  const progress=document.getElementById('trade-trend-progress');
+  if(progress&&!pending) progress.textContent=r.referenceYear+'년 기준 · '+firstYear+'–'+lastYear+'년 조회 완료';
+  setStatus('laundering', failures ? '일부 조회 미확인' : pending > 0 ? '조회 중' : '통계 조회 완료', failures ? 'bg-warning text-dark' : 'bg-secondary');
 }
 
 
