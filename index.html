@@ -8263,6 +8263,24 @@ function renderUspolicy(r) {
 // ═══════════════════════════════════════════════════════════════
 // 탭3: 종합 보고서
 // ═══════════════════════════════════════════════════════════════
+function renderRecentImportComparison(input, rows) {
+  const years = [2022,2023,2024,2025];
+  const hs6 = String(input.hs || '').slice(0,6);
+  const number = v => { if(v === null || v === undefined || String(v).trim() === '') return null; const n=Number(String(v).replace(/,/g,'')); return Number.isFinite(n) && n>=0 ? n : null; };
+  const paths = [[input.origin,'원산지국(생산국)'],[input.transit,'수출국(FTA 기준)']];
+  const body = paths.map(([country,role]) => {
+    const cells = years.map(year => {
+      const matched = (rows || []).filter(r=>String(r['품목번호 6단위'] || '').trim().slice(0,6)===hs6 && String(r['수출국'] || '').trim()===country && Number(r['연도'])===year);
+      const sum = field => { const values=matched.map(r=>number(r[field])); return values.length && values.every(v=>v!==null) ? values.reduce((a,b)=>a+b,0) : null; };
+      const amount=sum('수입 금액(천 달러)'), weight=sum('수입 중량(톤)');
+      const fmt=n=>n.toLocaleString(undefined,{maximumFractionDigits:3});
+      return '<td class="text-end"><b>'+(amount===null?'금액 미확인':fmt(amount)+'천 USD')+'</b><br><small class="text-muted">'+(weight===null?'중량 미확인':'중량 '+fmt(weight)+'톤')+'</small></td>';
+    }).join('');
+    return '<tr><td><b>'+_safe(country || '국가 미입력')+' → 한국</b><br><small class="text-muted">'+role+'</small></td>'+cells+'</tr>';
+  }).join('');
+  return '<p>HS '+_safe(hs6)+' · 두 국가로부터의 한국 수입금액과 중량을 비교합니다.</p><div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>한국 수입 경로</th>'+years.map(y=>'<th class="text-end">'+y+'년</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div><p class="note small">출처: 사이트에 저장된 국가별·HS 6단위 수입통계. 금액: 천 USD · 중량: 톤. 자료가 없는 값은 0으로 표시하지 않습니다. 2025년 자료의 연간 전체 집계 여부 미확인. 연간 전체와 일부 기간의 증감률을 직접 비교하지 않습니다.</p>';
+}
+
 function renderSummary() {
   const i = state.input;
   const R = state.results;
@@ -8314,16 +8332,7 @@ function renderSummary() {
 
   const section = (title, body) => `<div class="card mb-3"><div class="card-header">${title}</div><div class="card-body">${body}</div></div>`;
 
-  const trendRow = productionOk ? `
-    <table class="table table-sm table-bordered">
-      <thead><tr><th>연도</th><th>2022</th><th>2023</th><th>2024</th><th>2025</th></tr></thead>
-      <tbody><tr><td>${i.origin}→한국 수입(천$)</td>
-        <td>${R.production.yearly[2022].toLocaleString()}</td>
-        <td>${R.production.yearly[2023].toLocaleString()}</td>
-        <td>${R.production.yearly[2024].toLocaleString()}</td>
-        <td>${R.production.yearly[2025].toLocaleString()}</td>
-      </tr></tbody>
-    </table>` : naBox("수입 실적 데이터 없음");
+  const trendRow = renderRecentImportComparison(i, state.importData);
 
   const matrixRow = (label, risk, detail) => {
     const badge = risk === "high" ? "🔴 고위험" : risk === "mid" ? "🟡 중위험" : risk === "na" ? "➖ 해당없음" : risk === "pending" ? "⚪ 판정 보류" : "🟢 저위험";
@@ -8570,8 +8579,7 @@ function renderSummary() {
       </div></div>
     </div>
 
-    ${section("1. 최근 동향",
-      productionOk ? `<p>${i.origin}으로부터의 HS ${R.production.hs6} 한국 수입은 2022년 ${R.production.yearly[2022].toLocaleString()} 천$에서 2024년 ${R.production.yearly[2024].toLocaleString()} 천$로 ${R.production.growth === null ? '집계 시작' : (R.production.growth >= 0 ? '+' : '') + R.production.growth.toFixed(1) + '%'} 변화하였습니다.</p>` + trendRow : naBox("수입 실적 데이터 없음"))}
+    ${section("1. 최근 동향", trendRow)}
 
     ${section("2. 핵심 원재료 (BOM 구조)",
       bomOk ? `<p>HS ${R.bom.hs4} 4단위 내 총 ${R.bom.totalItems}개 세번 중 ${R.bom.partsCount}개(${R.bom.partsRatio.toFixed(1)}%)가 부분품입니다. ${R.bom.reasonDetail}</p>` : naBox("BOM 분석 불가"))}
