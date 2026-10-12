@@ -5664,19 +5664,19 @@ const COUNTRY_ISO3 = {
 
 // World Bank 지표 조회
 async function callWorldBank(isoCode, indicator, years = "2020:2023") {
+  const failed = message => { const rows = []; rows.queryStatus = {status:'error', message}; return rows; };
   try {
-    const url = `${PROXY_BASE}/api/worldbank/indicator?country=${isoCode}&indicator=${indicator}&years=${years}`;
+    const url = `${PROXY_BASE}/api/worldbank/indicator?country=${encodeURIComponent(isoCode)}&indicator=${encodeURIComponent(indicator)}&years=${encodeURIComponent(years)}`;
     const r = await fetch(url, { signal: _abortableSignal(15000) });
-    if (!r.ok) return null;
-    const data = await r.json();
-    // World Bank 응답: [metadata, [data_rows]]
-    if (Array.isArray(data) && Array.isArray(data[1])) {
-      return data[1].filter(row => row.value !== null);
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
+    const payload = await r.json();
+    if (!r.ok || payload?.success === false || payload?.error) return failed(payload?.error || 'HTTP ' + r.status);
+    const data = Array.isArray(payload) ? payload : payload?.data;
+    if (!Array.isArray(data) || !Array.isArray(data[1])) return failed('World Bank 응답 형식 확인 필요');
+    const rows = data[1].filter(row => row && typeof row.value === 'number' && Number.isFinite(row.value))
+      .sort((a,b)=>Number(b.date)-Number(a.date));
+    rows.queryStatus = {status:rows.length ? 'ok':'no_data', message:rows.length ? '' : '유효 관측치 없음'};
+    return rows;
+  } catch (e) { return failed(e.name === 'AbortError' ? '조회 시간 초과 또는 취소' : '조회 실패: ' + e.message); }
 }
 
 // ─── AI 한도 초과·오류 안내 토스트 ───────────────────────────
@@ -5994,9 +5994,10 @@ async function fetchCountryIndicators(countryName) {
     INDICATORS.map(ind => callWorldBank(iso, ind.code))
   );
 
-  const output = { iso, country: countryName };
+  const output = { iso, country: countryName, queryStatus: {} };
   INDICATORS.forEach((ind, i) => {
     const rows = results[i];
+    output.queryStatus[ind.key] = rows?.queryStatus || {status:'error',message:'조회 결과 없음'};
     if (rows && rows.length > 0) {
       const latest = rows[0];  // 가장 최근 연도
       output[ind.key] = { value: latest.value, year: latest.date, label: ind.label, unit: ind.unit };
@@ -6063,31 +6064,31 @@ function renderSupplychain(r) {
     return String(v);
   };
 
+  const groups = [r.originIndicators, ...(r.transit ? [r.transitIndicators] : []), r.korea];
+  const keys = ['gdpPerCapita','gni','gdp','population','mfgValue','industryVal','exports','imports'];
+  const validCount = groups.reduce((n,g)=>n+keys.filter(k=>g?.[k] && typeof g[k].value === 'number').length,0);
+  const expectedCount = groups.length * keys.length;
+  const cell = (g,key) => {
+    const v=g?.[key], q=g?.queryStatus?.[key];
+    if(v && typeof v.value === 'number') return fmt(v.value,v.unit)+'<br><small class="text-muted">'+_safe(String(v.year))+'년</small>';
+    return '<span class="text-muted">'+(q?.status === 'no_data' ? '자료 없음':'조회 실패')+'</span><br><small class="text-muted">'+_safe(q?.message || '국가 코드 또는 연결 상태 확인 필요')+'</small>';
+  };
   const makeRow = (label, key, unit) => {
     const o = r.originIndicators?.[key];
     const t = r.transitIndicators?.[key];
     const k = r.korea?.[key];
     return `<tr><td><strong>${label}</strong></td>
-      <td class="text-end">${o ? fmt(o.value, o.unit) : "—"}<br><small class="text-muted">${o?.year || ""}</small></td>
-      ${r.transit ? `<td class="text-end">${t ? fmt(t.value, t.unit) : "—"}<br><small class="text-muted">${t?.year || ""}</small></td>` : ""}
-      <td class="text-end">${k ? fmt(k.value, k.unit) : "—"}<br><small class="text-muted">${k?.year || ""}</small></td>
+      <td class="text-end">${cell(r.originIndicators,key)}</td>
+      ${r.transit ? `<td class="text-end">${cell(r.transitIndicators,key)}</td>` : ""}
+      <td class="text-end">${cell(r.korea,key)}</td>
     </tr>`;
   };
 
-  // 미스매치 판정 (제조업 부가가치 기반)
-  let mismatch = "";
-  const originMfg = r.originIndicators?.mfgValue?.value;
-  const transitMfg = r.transitIndicators?.mfgValue?.value;
-  if (originMfg && transitMfg) {
-    const diff = originMfg - transitMfg;
-    if (diff > 10) {
-      mismatch = `<div class="alert alert-warning mt-3">⚠️ <strong>${r.origin}의 제조업 비중(${originMfg.toFixed(1)}%)이 ${r.transit}(${transitMfg.toFixed(1)}%)보다 ${diff.toFixed(1)}%p 높음</strong> — 경유국은 제조 역량이 상대적으로 낮아 단순 경유·재수출 가능성 있음.</div>`;
-    }
-  }
+  const mismatch = '';
 
   body.innerHTML = `
-    <div class="alert alert-success">
-      <strong>✓ World Bank 실시간 지표 연동</strong> — 국가별 경제·산업 구조 비교
+    <div class="alert ${validCount === expectedCount ? 'alert-success' : 'alert-warning'}">
+      <strong>World Bank 지표: ${validCount === expectedCount ? '조회 완료' : validCount ? '일부 조회 미확인' : '조회 결과 미확인'}</strong> — 유효 값 ${validCount}/${expectedCount}개. 국가별 경제·산업 구조 참고
     </div>
     <h6>📊 국가별 경제·산업 지표 비교</h6>
     <div class="table-responsive">
@@ -6095,8 +6096,8 @@ function renderSupplychain(r) {
         <thead>
           <tr>
             <th>지표</th>
-            <th class="text-end">${r.origin} (원산지)</th>
-            ${r.transit ? `<th class="text-end">${r.transit} (수출/경유)</th>` : ""}
+            <th class="text-end">${r.origin} (원산지국·생산국)</th>
+            ${r.transit ? `<th class="text-end">${r.transit} (수출국·FTA 기준)</th>` : ""}
             <th class="text-end">한국 (참고)</th>
           </tr>
         </thead>
@@ -6113,9 +6114,9 @@ function renderSupplychain(r) {
       </table>
     </div>
     ${mismatch}
-    <p class="note mt-3">출처: World Bank Open Data (api.worldbank.org). 최근 연도 기준. 제조업 비중이 높을수록 실제 생산 능력을 뜻함.</p>`;
+    <p class="note mt-3">출처: World Bank Open Data (api.worldbank.org). 반환된 유효 관측치 중 최신 연도이며 지표별 연도가 다를 수 있습니다. 제조업·산업 부가가치는 GDP 대비 비중으로, 개별 기업의 제조 능력이나 해당 물품의 원산지를 판정하지 않습니다. 이 표는 국가별 통계이므로 같은 국가를 유지하고 HS만 바꾸면 값은 동일합니다.</p>`;
 
-  setStatus("supplychain", "지표 연결됨", "bg-success");
+  setStatus("supplychain", validCount === expectedCount ? "지표 조회 완료" : validCount ? "일부 조회 미확인" : "조회 결과 미확인", validCount === expectedCount ? "bg-success" : "bg-warning text-dark");
 }
 
 // ═══════════════════════════════════════════════════════════════
