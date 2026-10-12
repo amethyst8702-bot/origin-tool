@@ -682,18 +682,6 @@
     .tariff-risk-compare { grid-template-columns: 1fr; }
     .tariff-risk-arrow { display: none; }
   }
-
-.psr-review-layout {display:grid;gap:12px;margin:20px 0;max-width:1100px;}
-.psr-review-decisions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
-.psr-review-item {padding:16px 18px;border:1px solid #e1e6ed;border-radius:8px;background:#fff;}
-.psr-review-label {font-weight:700;color:#24364b;margin-bottom:8px;font-size:15px;}
-.psr-review-text {font-size:14px;line-height:1.85;color:#344054;overflow-wrap:anywhere;}
-.psr-review-priority {background:#fff8e8;border-color:#eedbb2;}
-.psr-review-evidence {background:#f6f8fb;}
-@media(max-width:700px){.psr-review-decisions{grid-template-columns:1fr;}.psr-review-item{padding:14px;}}
-.ai-section-verdict .ai-section-body {height:auto;max-height:none;overflow:visible;overflow-wrap:anywhere;}
-.ai-verdict-paragraph {margin:0 0 14px;line-height:1.85;}
-.ai-verdict-paragraph:last-child {margin-bottom:0;}
 </style>
 </head>
 <body>
@@ -4960,51 +4948,18 @@ function runPsrAnalysis(input) {
   };
 }
 
-function formatPsrReviewText(value) {
-  const clean = String(value || '').replace(/\*\*/g, '').trim();
-  return _safe(clean).replace(/\n/g, '<br>');
-}
-
-function parsePsrReviewFields(text) {
-  const labels = ['적용 기준', '근거 수준', '경로별 검토', '검증 우선도', '원산지 충족 여부', '우선 확인자료'];
-  const re = /(?:^|\n)\s*(?:[-*]\s*)?(?:\*\*)?(적용 기준|근거 수준|경로별 검토|검증 우선도|원산지 충족 여부|우선 확인자료)(?:\*\*)?\s*[:：]\s*/g;
-  const matches = [...String(text).matchAll(re)];
-  const fields = {};
-  matches.forEach((m, i) => {
-    const value = text.slice(m.index + m[0].length, i + 1 < matches.length ? matches[i+1].index : text.length).trim();
-    fields[m[1]] = fields[m[1]] ? fields[m[1]] + '\n' + value : value;
-  });
-  // Preserve unexpected preface and unstructured model output.
-  const preface = matches.length ? text.slice(0, matches[0].index).trim() : text.trim();
-  return {fields, preface};
-}
-
 function renderPsrAiReview() {
   const host = document.getElementById('psr-ai-review');
   if (!host) return;
   const ai = state.aiAnalysis;
   const text = ai && typeof ai.analysis === 'string' ? ai.analysis : '';
   const match = text.match(/PSR 검토 시작([\s\S]*?)PSR 검토 끝/);
-  if (!match) {
-    host.innerHTML = `<div class="alert alert-light border">${text ? 'AI 분석 탭에서 전체 검토 내용을 확인하세요.' : ai && ai.error ? 'AI 검토 결과를 받지 못했습니다. AI 분석 탭에서 오류를 확인하세요.' : 'AI 분석을 실행하면 기준별 검토 결과가 표시됩니다.'}</div>`;
-    return;
-  }
-  const {fields, preface} = parsePsrReviewFields(match[1].trim());
-  function section(title, value, tone) {
-    if (!value) return '';
-    return `<section class="psr-review-item ${tone || ''}"><div class="psr-review-label">${title}</div><div class="psr-review-text">${formatPsrReviewText(value)}</div></section>`;
-  }
-  const paths = (fields['경로별 검토'] || '').replace(/\s*(?=(?:[①②③④]|[1-4]호 경로|경로 [1-4]|선택지 [1-4]))/g, '\n').trim();
-  const documents = (fields['우선 확인자료'] || '').replace(/\s+(?=[1-9][.、)]\s)/g, '\n');
-  host.innerHTML = `<div class="psr-review-layout">
-    <div class="psr-review-decisions">${section('🔎 검증 우선도', fields['검증 우선도'], 'psr-review-priority')}${section('📋 원산지 충족 여부', fields['원산지 충족 여부'])}</div>
-    ${section('적용 기준', fields['적용 기준'])}
-    ${section('기준별 검토', paths)}
-    ${section('📁 우선 확인자료', documents)}
-    ${section('근거와 한계', fields['근거 수준'], 'psr-review-evidence')}
-    ${section('추가 검토', preface)}
-    <div class="text-muted small">검증 우선도는 추가 확인의 필요성을 뜻합니다. 원산지 판정에는 거래·생산 증빙이 필요합니다.</div>
-  </div>`;
+  let content;
+  if (match) content = `<div style="white-space:pre-wrap;line-height:1.8">${_safe(match[1].trim())}</div>`;
+  else if (text) content = 'PSR 검토 블록을 받지 못했습니다. AI 분석 시나리오 탭에서 전체 응답을 확인하세요.';
+  else if (ai && ai.error) content = 'AI 검토 결과를 받지 못했습니다. 기준 조회 결과는 유지됩니다. AI 분석 탭에서 오류를 확인하세요.';
+  else content = '전체 분석에서 AI 분석 시나리오 옵션을 선택하면 기준별 위험 신호·근거 수준·확인자료가 표시됩니다.';
+  host.innerHTML = `<h5>🔎 PSR 맞춤 검토</h5><div class="alert alert-light border">${content}</div><small class="text-muted">검증 우선도는 추가 확인의 필요성을 뜻합니다. 개별 물품의 원산지 판정에는 거래·생산 증빙이 필요합니다.</small>`;
 }
 
 function renderPsr(r) {
@@ -6024,12 +5979,11 @@ async function callOecdTiva(countryName, tivaSector) {
   try {
     const url = `${PROXY_BASE}/api/oecd-tiva?country_iso3=${iso}&sector=${encodeURIComponent(tivaSector)}`;
     const r = await fetch(url, { signal: _abortableSignal(20000) });
-    const data = await r.json();
-    if (!r.ok) return data.error ? data : { error: `OECD TiVA HTTP ${r.status}` };
-    return data;
+    if (!r.ok) return null;
+    return await r.json();
   } catch (e) {
     console.warn("OECD TiVA 호출 실패:", e.message);
-    return { error: e.message };
+    return null;
   }
 }
 
@@ -6572,18 +6526,18 @@ function renderRvc(r) {
 
     ${r.tivaBenchmark ? `
       <div class="alert alert-info mt-3" style="border-left:4px solid #0d6efd;">
-        <strong>🌐 OECD TiVA 산업 부가가치 참고지표</strong>
-        <div class="mt-1"><small>국가·산업 수출에 포함된 국내·해외 부가가치 비중 — 해당 거래의 원산지 판정과 구분</small></div>
+        <strong>🌐 OECD TiVA 부가가치 벤치마크 (실시간)</strong>
+        <div class="mt-1"><small>국가×산업별 평균 부가가치 비중 — RVC 신고값의 합리성 검증</small></div>
       </div>
       <table class="table table-sm table-bordered">
         <thead><tr><th>지표</th><th>값</th><th>의미</th></tr></thead>
         <tbody>
           <tr class="key-row"><td><strong>국내부가가치(DVA) 비중</strong></td>
               <td><strong>${r.tivaBenchmark.dvash !== null ? r.tivaBenchmark.dvash.toFixed(1) + '%' : '—'}</strong></td>
-              <td><small>해당 국가의 국내 생산·공급 과정에서 발생한 가치의 비중 (개별 거래 RVC와 다름)</small></td></tr>
-          <tr><td><strong>해외 부가가치 비중 (FVA)</strong></td>
+              <td><small>${r.origin}의 ${r.hs6.slice(0,2)}류 산업 평균 — RVC 신고 적정성 핵심 기준</small></td></tr>
+          <tr><td>외국부가가치(FVA) 비중</td>
               <td>${r.tivaBenchmark.fvash !== null ? r.tivaBenchmark.fvash.toFixed(1) + '%' : '—'}</td>
-              <td><small>해당 산업 수출액 중 해외에서 발생한 가치의 비중. 원료·부품·서비스의 직접·간접 기여 포함</small></td></tr>
+              <td><small>수입중간재 의존도 (높을수록 비원산지 ↑)</small></td></tr>
           <tr><td>후방참여(BWFVA)</td>
               <td>${r.tivaBenchmark.bwfva !== null ? r.tivaBenchmark.bwfva.toFixed(1) : '—'}</td>
               <td><small>외국 중간재 사용 정도</small></td></tr>
@@ -6592,13 +6546,6 @@ function renderRvc(r) {
               <td><small>높을수록 가공무역·환적 가능성 ↑</small></td></tr>
         </tbody>
       </table>
-
-      <div class="alert alert-light border">
-        <strong>💡 FVA는 무엇인가요?</strong>
-        <p class="mt-2 mb-2">FVA가 20%라면 해당 국가·산업의 수출액 100달러 중 약 20달러는 해외에서 발생한 부가가치라는 뜻입니다. 특정 제품의 수입 원단 비율이나 공장 가공비를 뜻하지 않습니다.</p>
-        <p class="mb-2"><strong>검증에 어떻게 참고하나요?</strong> 수치가 높으면 해외 투입 의존도가 큰 산업으로 볼 수 있어, 부가가치 기준 적용 시 주요 재료의 원산지·가격·누적 적용 여부를 우선 확인하는 참고자료로 활용합니다.</p>
-        <p class="mb-0 text-muted">국가·산업 전체의 통계이며 개별 물품의 FTA RVC나 비원산지재료 비율이 아닙니다. 해외산과 협정상 비원산지는 같지 않으며, 세번변경·특정공정 충족 여부는 재료 HS와 실제 공정을 별도로 확인해야 합니다.</p>
-      </div>
 
       ${r.tivaBenchmark.warning ? `
         <div class="alert ${r.tivaBenchmark.warning.startsWith('🔴') ? 'alert-danger' : r.tivaBenchmark.warning.startsWith('🟡') ? 'alert-warning' : 'alert-success'} mt-2">
@@ -6614,7 +6561,7 @@ function renderRvc(r) {
         </div>` : ''}
     ` : `
       <div class="alert alert-secondary mt-3">
-        <small>OECD TiVA 조회 결과가 없습니다. 연결 상태 또는 해당 국가·산업·연도의 데이터 제공 여부를 확인하세요.</small>
+        <small>OECD TiVA 데이터 미연결 (proxy 미실행 또는 비OECD 국가) — 외국 산업 비교 생략됨.</small>
       </div>
     `}
 
@@ -10260,7 +10207,7 @@ function parseAiAnalysis() {
     let afterNum = trimmed.substring(numMatch[0].length).replace(/^\s*[:：]?\s*/, "");
 
     // 첫 필드 위치 찾기 (배경/세번/PSR/위반 등) — 없으면 전체가 헤드
-    const fieldStartMatch = afterNum.match(/\s+(?:제시\s*이유|확인된\s*정보|예상\s*문제|확인자료|배경|세번\s*흐름|HS\s*흐름|신고\s*세번\s*적정성|신고\s*HS|PSR(?:\s*평가)?|위반(?:\s*위험)?)\s*[:：]/);
+    const fieldStartMatch = afterNum.match(/\s+(?:배경|세번\s*흐름|HS\s*흐름|신고\s*세번\s*적정성|신고\s*HS|PSR(?:\s*평가)?|위반(?:\s*위험)?)\s*[:：]/);
     const fieldStartIdx = fieldStartMatch ? fieldStartMatch.index : -1;
 
     const headLine = fieldStartIdx >= 0 ? afterNum.substring(0, fieldStartIdx).trim() : afterNum.trim();
@@ -10287,7 +10234,7 @@ function parseAiAnalysis() {
     };
 
     // 필드는 다음 필드 시작 or 문자열 끝까지 매칭
-    const nextFieldLA = "(?=\\s*(?:제시\\s*이유|확인된\\s*정보|예상\\s*문제|확인자료|배경|세번\\s*흐름|HS\\s*흐름|신고\\s*세번\\s*적정성|신고\\s*HS\\s*적정성|세번\\s*적정성|PSR(?:\\s*평가)?|위반(?:\\s*위험)?)\\s*[:：]|$)";
+    const nextFieldLA = "(?=\\s*(?:배경|세번\\s*흐름|HS\\s*흐름|신고\\s*세번\\s*적정성|신고\\s*HS\\s*적정성|세번\\s*적정성|PSR(?:\\s*평가)?|위반(?:\\s*위험)?)\\s*[:：]|$)";
 
     const grab = (fieldPattern) => {
       const re = new RegExp(fieldPattern + "\\s*[:：]\\s*(.+?)" + nextFieldLA, "s");
@@ -10295,10 +10242,6 @@ function parseAiAnalysis() {
       return m ? stripBrackets(m[1].trim()) : "";
     };
 
-    cur.reason = grab("제시\\s*이유");
-    cur.evidence = grab("확인된\\s*정보");
-    cur.issue = grab("예상\\s*문제");
-    cur.documents = grab("확인자료");
     cur.background = grab("배경");
     cur.hs_flow = grab("(?:세번|HS)\\s*(?:흐름|변경|변화)");
     cur.declared_hs_check = grab("(?:신고\\s*세번|신고\\s*HS|세번)\\s*적정성");
@@ -10310,7 +10253,7 @@ function parseAiAnalysis() {
     }
 
     // 배경이 여전히 비어있으면 rest 전체를 배경으로 (최후 fallback)
-    if (!cur.background && !cur.reason && !cur.evidence && !cur.issue && rest.trim()) {
+    if (!cur.background && rest.trim()) {
       cur.background = stripBrackets(rest.trim().slice(0, 300));
     }
     // rest도 없고 배경도 없으면 headLine 전체를 배경으로
@@ -10352,16 +10295,11 @@ function parseAiAnalysis() {
     scenarios.push(...filtered);
   }
 
-  // Keep product/PSR-specific hypotheses ahead of generic repacking possibilities.
-  const genericProcess = s => /재포장|라벨\s*(교체|변경)|단순\s*(포장|가공)|완제품\s*수입/.test(s.name || "");
-  scenarios.sort((a, b) => Number(genericProcess(a)) - Number(genericProcess(b)));
-  scenarios.forEach((s, i) => { s.n = i + 1; });
-
   // ─── 3. 종합판단 텍스트에서 위험 등급 추출 ───
   let verdictLevel = null;
   let verdictText = "";
   if (sections.verdict) {
-    verdictText = sections.verdict.replace(/PSR 검토 시작[\s\S]*?(?:PSR 검토 끝|$)/g, "").trim();
+    verdictText = sections.verdict.split("\n").filter(s => s.trim()).join(" ").trim();
     verdictLevel = levelOf(verdictText);
     // 시나리오에서 가장 높은 위반위험을 보충적으로 사용
     if (!verdictLevel && scenarios.length) {
@@ -10420,15 +10358,6 @@ function parseAiAnalysis() {
 // ═══════════════════════════════════════════════════════════════
 // AI 분석 시나리오 탭 렌더 — Gemini 결과를 페이지에서 직접 확인
 // ═══════════════════════════════════════════════════════════════
-function renderVerdictParagraphs(text) {
-  const clean = String(text || '').replace(/PSR 검토 시작[\s\S]*?(?:PSR 검토 끝|$)/g, '').trim();
-  // Keep all text; add paragraph breaks to legacy responses without newlines.
-  const paragraphs = clean.includes('\n')
-    ? clean.split(/\n+/).filter(x => x.trim())
-    : (clean.match(/[^。.!?]+(?:[。.!?](?=\s|$)|$)/g) || [clean]);
-  return paragraphs.map(p => `<p class="ai-verdict-paragraph">${_safe(p.trim())}</p>`).join('');
-}
-
 function renderAiTab() {
   const container = document.getElementById("ai-body");
   const statusBadge = document.getElementById("status-ai");
@@ -10592,10 +10521,6 @@ function renderAiTab() {
             `<span class="ai-scen-title">${_safe(s.name)}</span>`,
             `<span class="ai-scen-badges">${likelihoodChip(s.likelihood_level)}${violationChip(s.violation_level)}</span>`,
           `</div>`,
-          s.reason ? `<div class="ai-scen-line"><b>제시 이유</b> · ${_safe(s.reason)}</div>` : '',
-          `<div class="ai-scen-line"><b>확인된 정보</b> · ${_safe(s.evidence || '해당 거래의 구체적 증빙은 미확인. 아래 내용은 검토 가설입니다.')}</div>`,
-          s.issue ? `<div class="ai-scen-line"><b>예상 문제</b> · ${_safe(s.issue)}</div>` : '',
-          s.documents ? `<div class="ai-scen-line"><b>확인자료</b> · ${_safe(s.documents)}</div>` : '',
           s.background ? `<div class="ai-scen-bg">${_safe(s.background)}</div>` : '',
           s.hs_flow ? `<div class="ai-scen-line ai-scen-line-flow">▸ <b>세번</b> <code>${_safe(s.hs_flow)}</code></div>` : '',
           factsLine,
@@ -10604,10 +10529,6 @@ function renderAiTab() {
       html += parts.filter(Boolean).join('');
     });
     html += `</div></div>`;
-  }
-
-  if (parsed && parsed.scenarios && parsed.scenarios.length === 0) {
-    html += `<div class="ai-section"><div class="ai-section-header"><h4 class="ai-section-title">공정 시나리오 분석</h4></div><div class="ai-section-body">${_safe(parsed.rawSections?.scenarios || '현재 응답에서 구체적 시나리오가 제시되지 않았습니다. 위험이 없다는 의미는 아니며 원문과 확인자료를 검토하세요.')}</div></div>`;
   }
 
   // ─── 종합 판단 ───
@@ -10619,7 +10540,7 @@ function renderAiTab() {
           <h4 class="ai-section-title">종합 판단</h4>
           ${parsed.verdictLevel ? verdictBanner(parsed.verdictLevel) : ''}
         </div>
-        <div class="ai-section-body">${renderVerdictParagraphs(parsed.verdictText)}</div>
+        <div class="ai-section-body">${_safe(parsed.verdictText)}</div>
       </div>`;
   }
 
@@ -12024,21 +11945,21 @@ window.addEventListener("DOMContentLoaded", () => {
       "문장마다 필요한 곳에 근거 수준을 명시: 제공 기준자료 / 제공 통계 / 사용자 제공 / 산업 일반정보 / 분석 가정 / 미확인. 웹 검색 도구가 없으므로 이번 호출에서 검색·확인했다고 주장하거나 출처 URL·회사·금액을 생성하지 마세요. 공급망 후보는 확인된 해당 거래의 재료와 구분하세요.\n" +
       "TiVA·국가 산업비율·수입단가·BOM 표준비율은 참고치입니다. 실제 거래의 RVC·최소허용 비율로 대체하지 마세요. 재료 원산지·HS·가격과 완제품 가격 및 협정 산식이 확보될 때만 계산하며, 없으면 필요한 값과 산식을 설명하세요. 동일 재료의 조달국이 회원국이어도 원산지 자격·누적 요건 확인 없이 역내산으로 합산하지 마세요. 수치 없는 위험 확률·고정 점수는 만들지 마세요.\n" +
       "검증 우선도(높음/보통/낮음/판단 유보)와 원산지 충족 여부(충족/불충족/판정 유보)를 별도로 설명하세요. 통계·산업정보만 있으면 개별 물품 충족 여부는 판정 유보이며, 조건부 시나리오는 조건을 명시하세요.\n" +
-      "종합 판단 섹션 끝에 다음 텍스트 블록을 반드시 포함하세요(대괄호를 쓰지 마세요):\nPSR 검토 시작\n적용 기준: ...\n근거 수준: ...\n경로별 검토: 각 경로를 줄바꿈하고 경로 1, 경로 2로 시작. 각 경로는 조건·위험 신호·미확인 사항을 간결히 설명\n검증 우선도: ... — 이유\n원산지 충족 여부: ... — 근거와 한계\n우선 확인자료: 구체적 재료·공정별 자료 3개\nPSR 검토 끝\n\n";
+      "종합 판단 섹션 끝에 다음 텍스트 블록을 반드시 포함하세요(대괄호를 쓰지 마세요):\nPSR 검토 시작\n적용 기준: ...\n근거 수준: ...\n경로별 검토: 각 OR/AND 경로의 조건·위험 신호·미확인 사항\n검증 우선도: ... — 이유\n원산지 충족 여부: ... — 근거와 한계\n우선 확인자료: 구체적 재료·공정별 자료 3개\nPSR 검토 끝\n\n";
 
     return "다음은 한국으로 수입되는 물품의 원산지 분석 데이터입니다.\n\n" +
       "【원산지 정보 해석 규칙】\n" + originRules + "\n\n" + psrRules +
       "【입력 정보】\n" + JSON.stringify(input, null, 2) + "\n\n" +
       "【분석 결과 요약】\n" + JSON.stringify(summary, null, 2) + "\n\n" +
       "【외부 데이터】\n" + JSON.stringify(external, null, 2) + "\n\n" +
-      "【요청】\n품목·조회 PSR에 직접 연결되는 핵심 재료의 세번변경 장애나 필수 공정 누락을 먼저 분석하세요. 일반적인 완제품 수입·재포장·라벨 교체는 해당 품목에 연결되는 구체적 정황이 제공된 경우에만 포함하고 뒤에 배치하세요. 시나리오 개수를 채우기 위해 일반론을 생성하지 마세요. 근거가 부족하면 1~2개만, 구체적 가설도 없으면 0개로 하고 현재 자료에서 구체적 위험 정황은 확인되지 않음이라고 쓰세요. 이는 원산지 충족이나 위험 없음의 판정이 아닙니다.\n\n" +
+      "【요청】\n산업 도메인 지식으로 위반 가능성 시나리오를 다각도로 분석.\n\n" +
       "[필수 출력 형식 — 첫 글자가 '[품목 개요]' 헤더부터 시작]\n" +
       "※ 섹션 헤더는 반드시 [ ]로 감쌀 것: [품목 개요], [동향], [공정 시나리오 분석], [종합 판단], [검증 권고]\n" +
       "※ 헤더 안의 값·본문에는 [ ] 사용 금지.\n\n" +
       "[품목 개요]\n실제 무엇인지·핵심 원재료·제조공정 (3-5문장).\n\n" +
       "[동향]\n수입 시장·산업 동향 (2-3문장).\n\n" +
-      "[공정 시나리오 분석]\n시나리오 1: 이름 — 가능성 (매우 높음/높음/보통/낮음)\n  제시 이유: 이 품목의 핵심 재료·공정과 적용 PSR에 연결되는 이유\n  확인된 정보: 제공 자료의 구체적 내용과 근거 수준. 해당 거래 증빙이 없으면 미확인\n  예상 문제: 어떤 조건에서 어떤 PSR 요건을 충족하지 못하는지\n  확인자료: 위 가설을 확인하거나 배제할 재료·공정별 자료\n  세번 흐름: ① 원물 → ② 중간 → ③ 신고\n  PSR 평가: 조건부 충족/조건부 미충족/판정 유보 — 근거 수준과 미확인 사항\n  위반 위험: 높음/보통/낮음\n(0-4개, 최소 개수 없음)\n\n" +
-      "[종합 판단]\n판단 요약: 핵심 결론 1문장.\n주요 근거: 확인된 정보와 분석 가정을 구분해 1-2문장.\n남은 확인사항: 결론을 바꿀 수 있는 미확인 사항 1문장.\n세 항목은 각각 줄바꿈. PSR 검토 블록은 그 뒤에 별도로 작성.\n\n" +
+      "[공정 시나리오 분석]\n시나리오 1: 이름 — 가능성 (매우 높음/높음/보통/낮음)\n  배경: ...\n  세번 흐름: ① 원물 → ② 중간 → ③ 신고\n  PSR 평가: 조건부 충족/조건부 미충족/판정 유보 — 근거 수준과 미확인 사항\n  위반 위험: 높음/보통/낮음\n(2-4개)\n\n" +
+      "[종합 판단]\n가장 가능성 큰 시나리오 기준 위험 평가 (3-4문장).\n\n" +
       "[검증 권고]\n- 자료1\n- 자료2\n- 자료3\n" + (extra || "");
   }
 
