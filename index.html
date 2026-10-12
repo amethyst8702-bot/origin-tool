@@ -2795,6 +2795,7 @@ function resetAnalysis() {
   state.aiAnalysis = null;
   state.bomQuant = null;
   state.bomTemplate = null;
+  state.bomAiSuggestion = null;
   state.autoDetectWarning = null;
   state.hsPrecision = null;
 
@@ -3144,6 +3145,7 @@ async function _runAllAnalysesInternal() {
   state.autoDetectWarning = null;
   state.autoDetectMeta = null;
   state.bomQuant = null;  // BOM 정량 결과는 새 입력 시 클리어
+  state.bomAiSuggestion = null; // 새 품목에 이전 AI BOM 표시 방지
   state.aiAnalysis = null;  // AI 분석 결과 클리어
 
   // ═══ 자동 원산지 탐지 모드 ═══
@@ -3858,6 +3860,7 @@ async function triggerBomAiSuggestion(r) {
       return;
     }
     state.bomAiSuggestion = data;
+    if (state.input) renderSummary();
     renderBomAiCard(data);
   } catch (e) {
     container.innerHTML = `
@@ -4143,6 +4146,7 @@ function _renderBomSuggestion(data) {
 
   // state에 저장 (자동 채우기용)
   state.bomAiSuggestion = data;
+    if (state.input) renderSummary();
 
   _bomAiSetStatus(`
     <div class="card border-info">
@@ -8281,6 +8285,15 @@ function renderRecentImportComparison(input, rows) {
   return '<p>HS '+_safe(hs6)+' · 두 국가로부터의 한국 수입금액과 중량을 비교합니다.</p><div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>한국 수입 경로</th>'+years.map(y=>'<th class="text-end">'+y+'년</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div><p class="note small">출처: 사이트에 저장된 국가별·HS 6단위 수입통계. 금액: 천 USD · 중량: 톤. 자료가 없는 값은 0으로 표시하지 않습니다. 2025년 자료의 연간 전체 집계 여부 미확인. 연간 전체와 일부 기간의 증감률을 직접 비교하지 않습니다.</p>';
 }
 
+function renderSummaryAiBom() {
+  const data=state.bomAiSuggestion;
+  if(!data || data.error) return '<div class="alert alert-secondary mb-0">AI 추천 BOM 결과가 아직 없습니다. BOM 분석 탭에서 생성된 결과가 여기에 함께 표시됩니다.</div>';
+  const comps=Array.isArray(data.components)?data.components:[];
+  const text=v=>_safe(String(v ?? '—'));
+  const rows=comps.map(c=>'<tr><td><b>'+text(c.name)+'</b></td><td>'+text(c.hs6)+'</td><td>'+(typeof c.typical_share_pct==='number'?text(c.typical_share_pct)+'%':'미확인')+'</td><td>'+text({core:'핵심',major:'주요',minor:'보조'}[c.importance] || '미확인')+'</td><td>'+text(Array.isArray(c.typical_origins)?c.typical_origins.join(', '):'미확인')+'</td><td>'+text(c.risk_reason || '—')+'</td></tr>').join('');
+  return '<p class="note">BOM 분석 탭과 동일한 AI 생성 결과입니다. 재료·HS·가격 비중·조달국은 추정이며 실제 업체 자료나 원산지 증명이 아닙니다.</p>'+(data.product_summary?'<p>'+text(data.product_summary)+'</p>':'')+(comps.length?'<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>재료·부품</th><th>추정 HS6</th><th>추정 가격 비중</th><th>중요도</th><th>조달국 후보</th><th>검토 사항</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>생성된 재료·부품 항목이 없습니다.</p>')+(data.manufacturing_note?'<p><b>제조공정 참고:</b> '+text(data.manufacturing_note)+'</p>':'')+(data.psr_hint?'<p><b>PSR 검토 참고:</b> '+text(data.psr_hint)+'</p>':'')+(data.notes?'<p class="note">'+text(data.notes)+'</p>':'');
+}
+
 function renderSummary() {
   const i = state.input;
   const R = state.results;
@@ -8581,8 +8594,7 @@ function renderSummary() {
 
     ${section("1. 최근 동향", trendRow)}
 
-    ${section("2. 핵심 원재료 (BOM 구조)",
-      bomOk ? `<p>HS ${R.bom.hs4} 4단위 내 총 ${R.bom.totalItems}개 세번 중 ${R.bom.partsCount}개(${R.bom.partsRatio.toFixed(1)}%)가 부분품입니다. ${R.bom.reasonDetail}</p>` : naBox("BOM 분석 불가"))}
+    ${section("2. 핵심 원재료 (AI 추천 BOM)", renderSummaryAiBom())}
 
     ${section("3. 주요 업체 정보",
       `<div class="alert alert-warning">🚧 외부 산업 DB 연동 후 제공 예정 (Phase 2)</div>`)}
@@ -8605,13 +8617,6 @@ function renderSummary() {
       (i.optCbp ? `<p><strong>CBP 판례:</strong> 별도 탭 참조 — 수동 조회 필요</p>` : '') +
       (i.optUsPolicy && R.uspolicy ? `<p><strong>Section 232:</strong> ${R.uspolicy.applicable || '해당없음'}</p><p><strong>상호관세:</strong> ${R.uspolicy.reciprocal}</p>` : '')) : ''}
 
-    <div class="alert alert-info mt-4">
-      <strong>💡 결론:</strong> ${overallLevel === "high"
-        ? "본 품목은 원산지 결정기준 위반 가능성이 <strong>높은</strong> 것으로 종합 평가됩니다. 즉각적인 BOM 검증·PSR 재확인·원산지증명서 정밀 심사가 필요합니다."
-        : overallLevel === "mid"
-        ? "본 품목의 원산지 결정기준 위반 가능성은 <strong>보통</strong> 수준입니다. 정기 모니터링 및 수입 급증 시 정밀 검토를 권고합니다."
-        : "본 품목의 원산지 결정기준 위반 가능성은 <strong>낮은</strong> 수준입니다."}
-    </div>
     <p class="note">※ 본 분석은 참고용이며, 최종 판단 전 관세청 고시·FTA포털 원문·대외무역관리규정을 반드시 확인하세요.</p>
   `;
 }
