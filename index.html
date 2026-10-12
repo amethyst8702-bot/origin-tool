@@ -694,6 +694,7 @@
 .ai-section-verdict .ai-section-body {height:auto;max-height:none;overflow:visible;overflow-wrap:anywhere;}
 .ai-verdict-paragraph {margin:0 0 14px;line-height:1.85;}
 .ai-verdict-paragraph:last-child {margin-bottom:0;}
+.bg-tariff-orange { background-color:#f97316 !important; color:#1f2937 !important; }
 </style>
 </head>
 <body>
@@ -7303,6 +7304,9 @@ async function renderCustomsTradeCard(r) {
     transitIso2 ? fetchCustomsTrade(r.hs10, transitIso2) : Promise.resolve(null),
   ]);
 
+  // HS 변경·재조회 이후 이전 응답이 새 화면과 상태를 덮어쓰지 않도록 확인.
+  if (document.getElementById('tariff-customs-slot') !== slot) return;
+
   // ★ state.customsData에 저장 → AI 프롬프트에서 재활용 (Phase 3)
   state.customsData = {
     origin: dData,
@@ -7539,10 +7543,20 @@ function renderTariffLimitationCard(r) {
     </div>`;
 }
 
+// 화면용 경제적 유인 4단계. 원산지 위반 확률이나 법정 판단 기준이 아님.
+function tariffIncentiveDisplay(diff) {
+  if (typeof diff !== 'number' || !Number.isFinite(diff)) return { label:'판단 유보', cls:'bg-secondary', color:'#6c757d' };
+  if (diff <= 0) return { label:'유인 낮음', cls:'bg-success', color:'#198754' };
+  if (diff < 7) return { label:'유인 보통', cls:'bg-warning text-dark', color:'#9a7600' };
+  if (diff < 15) return { label:'유인 큼', cls:'bg-tariff-orange', color:'#b45309' };
+  return { label:'유인 매우 큼', cls:'bg-danger', color:'#dc3545' };
+}
+
 function renderTariff(r) {
   const body = document.getElementById('tariff-body');
   if (r.status !== 'ok') { body.innerHTML = naBox(r.reason || '세율 조회 불가'); setStatus('tariff','조회 불가','bg-secondary'); return; }
   const rate = v => v === null ? '미확인' : v + '%';
+  const incentive = tariffIncentiveDisplay(r.rateDiff);
   const selector = r.isMultiMatch ? '<label class="form-label">비교할 HS 10단위 선택</label><select class="form-select mb-3" onchange="rerenderTariffForHs10(this.value)">' + r.hs10Details.map(d=>'<option value="' + d.hs10 + '"' + (d.hs10 === r.hs10 ? ' selected' : '') + '>' + _safe(d.hs10 + ' ' + d.name) + '</option>').join('') + '</select>' : '';
   const unresolved = r.direct.unresolved.length + r.indirect.unresolved.length;
   body.innerHTML = '<div class="alert alert-info"><b>한 가지 기준으로 비교</b>: 관세청 7순위와 세율 비교 조건을 적용합니다. 별도 고율·미추천 위험 시나리오로 세율을 바꾸지 않습니다. 특혜세율은 요건 충족 가정이며 실제 신고세율을 확정한 것은 아닙니다.</div>'
@@ -7550,11 +7564,14 @@ function renderTariff(r) {
     + (unresolved ? '<div class="alert alert-warning">적용 조건이 미확인인 항목 ' + unresolved + '건이 있어 결과는 참고값입니다. 신고 전 적용 관세와 요건을 확인하세요.</div>' : '')
     + '<div class="row g-3 mb-3"><div class="col-md-4"><div class="metric-card"><div class="label">' + _safe(r.origin) + ' 원산지 가정</div><div class="value">' + tariffRateLabel(r.direct) + '</div><div class="sub">' + _safe(r.direct.agreement) + ' · ' + _safe(r.direct.priorityLabel) + (r.direct.conditional ? ' · 요건 충족 가정' : '') + '</div></div></div>'
     + '<div class="col-md-4"><div class="metric-card"><div class="label">' + _safe(r.transit) + ' 원산지 가정</div><div class="value">' + tariffRateLabel(r.indirect) + '</div><div class="sub">' + _safe(r.indirect.agreement) + ' · ' + _safe(r.indirect.priorityLabel) + (r.indirect.conditional ? ' · 요건 충족 가정' : '') + '</div></div></div>'
-    + '<div class="col-md-4"><div class="metric-card"><div class="label">' + (r.compoundComparison ? '종가세 부분의 세율차' : '동일 기준 세율차') + '</div><div class="value">' + r.rateDiff + '%p</div><div class="sub">왼쪽 세율 − 오른쪽 세율</div></div></div></div>'
+    + '<div class="col-md-4"><div class="metric-card"><div class="label">' + (r.compoundComparison ? '종가세 부분의 세율차' : '동일 기준 세율차') + '</div><div class="value" style="color:' + incentive.color + ';">' + r.rateDiff + '%p</div><div class="sub"><span class="badge ' + incentive.cls + '">' + incentive.label + '</span> · 왼쪽 세율 − 오른쪽 세율</div></div></div></div>'
     + (r.compoundComparison ? '<div class="alert alert-warning">kg당 세액 조건이 포함되어 있습니다. 위 %p는 종가세 부분의 비교이며 실제 절감액이 아닙니다. 세액 = max(과세가격 × 세율, 중량kg × kg당 세액). 과세가격·중량이 없으면 최종 세액과 실효세율을 확정하지 않습니다.</div>' : '')
     + '<p class="small">경유국 원산지 가정은 단순 경유만으로 성립하지 않습니다. ' + _safe(r.direct.note) + '</p>'
+    + '<p class="small text-muted">표시 기준: 초록 ≤0%p · 노랑 0초과~7미만%p · 주황 7이상~15미만%p · 빨강 ≥15%p. 경제적 유인 비교를 위한 화면 분류이며 원산지 위반 확률이나 법정 기준이 아닙니다. 적용 요건·종량세 조건은 별도로 확인하세요.</p>'
     + '<details class="card mt-3"><summary class="card-header">세율 적용 우선순위·계산 기준</summary><div class="card-body"><ol><li>덤핑방지·상계·보복·긴급 등: 추가부과 및 대상 조건 별도 확인</li><li>FTA: 관세법상 세율보다 낮으면 우선. 동률은 신청 시 FTA 선택 가능</li><li>일반 WTO·국제협력·편익: 4~7순위보다 낮을 때만 우선</li><li>조정·할당·계절: 후순위에 우선. 할당은 5순위 특혜보다 낮을 때만 우선</li><li>최빈국특혜: 대상국·원산지 등 요건을 전제로 잠정·기본에 우선</li><li>잠정: 기본에 우선</li><li>기본</li></ol><p>일부 농림축산물 고율 양허는 기본·잠정보다 높아도 우선하는 예외가 있으므로, 확인한 마늘 4개 세번은 추천 선택 조건에 따라 예외를 적용하고, 다른 고율 양허 대상은 확인 없이 낮은 기본세율로 확정하지 않습니다.</p><p class="mb-0">세율차 = 원산지 후보국 가정 세율 − 수출·경유국 원산지 가정 세율. 같은 값이면 0%p입니다. 빈 값·복합세율을 0%로 바꾸지 않습니다.</p><a href="https://unipass.customs.go.kr/clip/hsinfosrch/openULS0201009Q.do" target="_blank" rel="noopener">관세청 세율 적용 우선순위</a></div></details>';
-  setStatus('tariff', r.rateDiff + '%p · 요건 확인 필요', 'bg-secondary');
+  body.insertAdjacentHTML('beforeend', '<div id="tariff-customs-slot"></div>');
+  setStatus('tariff', r.rateDiff + '%p · ' + incentive.label, incentive.cls);
+  renderCustomsTradeCard(r).catch(e => console.warn('관세청 카드 렌더 실패:', e));
 }
 
 
