@@ -691,6 +691,9 @@
 .psr-review-priority {background:#fff8e8;border-color:#eedbb2;}
 .psr-review-evidence {background:#f6f8fb;}
 @media(max-width:700px){.psr-review-decisions{grid-template-columns:1fr;}.psr-review-item{padding:14px;}}
+.ai-section-verdict .ai-section-body {height:auto;max-height:none;overflow:visible;overflow-wrap:anywhere;}
+.ai-verdict-paragraph {margin:0 0 14px;line-height:1.85;}
+.ai-verdict-paragraph:last-child {margin-bottom:0;}
 </style>
 </head>
 <body>
@@ -10342,7 +10345,7 @@ function parseAiAnalysis() {
   let verdictLevel = null;
   let verdictText = "";
   if (sections.verdict) {
-    verdictText = sections.verdict.split("\n").filter(s => s.trim()).join(" ").trim();
+    verdictText = sections.verdict.replace(/PSR 검토 시작[\s\S]*?(?:PSR 검토 끝|$)/g, "").trim();
     verdictLevel = levelOf(verdictText);
     // 시나리오에서 가장 높은 위반위험을 보충적으로 사용
     if (!verdictLevel && scenarios.length) {
@@ -10401,6 +10404,15 @@ function parseAiAnalysis() {
 // ═══════════════════════════════════════════════════════════════
 // AI 분석 시나리오 탭 렌더 — Gemini 결과를 페이지에서 직접 확인
 // ═══════════════════════════════════════════════════════════════
+function renderVerdictParagraphs(text) {
+  const clean = String(text || '').replace(/PSR 검토 시작[\s\S]*?(?:PSR 검토 끝|$)/g, '').trim();
+  // Keep all text; add paragraph breaks to legacy responses without newlines.
+  const paragraphs = clean.includes('\n')
+    ? clean.split(/\n+/).filter(x => x.trim())
+    : (clean.match(/[^。.!?]+(?:[。.!?](?=\s|$)|$)/g) || [clean]);
+  return paragraphs.map(p => `<p class="ai-verdict-paragraph">${_safe(p.trim())}</p>`).join('');
+}
+
 function renderAiTab() {
   const container = document.getElementById("ai-body");
   const statusBadge = document.getElementById("status-ai");
@@ -10583,7 +10595,7 @@ function renderAiTab() {
           <h4 class="ai-section-title">종합 판단</h4>
           ${parsed.verdictLevel ? verdictBanner(parsed.verdictLevel) : ''}
         </div>
-        <div class="ai-section-body">${_safe(parsed.verdictText)}</div>
+        <div class="ai-section-body">${renderVerdictParagraphs(parsed.verdictText)}</div>
       </div>`;
   }
 
@@ -12002,7 +12014,7 @@ window.addEventListener("DOMContentLoaded", () => {
       "[품목 개요]\n실제 무엇인지·핵심 원재료·제조공정 (3-5문장).\n\n" +
       "[동향]\n수입 시장·산업 동향 (2-3문장).\n\n" +
       "[공정 시나리오 분석]\n시나리오 1: 이름 — 가능성 (매우 높음/높음/보통/낮음)\n  배경: ...\n  세번 흐름: ① 원물 → ② 중간 → ③ 신고\n  PSR 평가: 조건부 충족/조건부 미충족/판정 유보 — 근거 수준과 미확인 사항\n  위반 위험: 높음/보통/낮음\n(2-4개)\n\n" +
-      "[종합 판단]\n가장 가능성 큰 시나리오 기준 위험 평가 (3-4문장).\n\n" +
+      "[종합 판단]\n판단 요약: 핵심 결론 1문장.\n주요 근거: 확인된 정보와 분석 가정을 구분해 1-2문장.\n남은 확인사항: 결론을 바꿀 수 있는 미확인 사항 1문장.\n세 항목은 각각 줄바꿈. PSR 검토 블록은 그 뒤에 별도로 작성.\n\n" +
       "[검증 권고]\n- 자료1\n- 자료2\n- 자료3\n" + (extra || "");
   }
 
