@@ -1830,134 +1830,6 @@ if (typeof window !== "undefined") {
 }
 
 // ═══════════════════════════════════════════════════════════
-// PSR 정량 위험도 산식 (PSR 챗봇 지침 v21 기반)
-// ═══════════════════════════════════════════════════════════
-
-// FTA별 De Minimis 정확 한도 (한-칠레 8%, 그 외 10%)
-function getDeMinimisLimit(ftaName) {
-  const f = (ftaName || "");
-  if (f.includes("칠레")) return 8;
-  return 10;
-}
-
-// CIF→FOB 환산 계수 (산업별)
-function getCifFobFactor(hsCode) {
-  if (!hsCode) return 0.97;
-  const hs2 = hsCode.slice(0, 2);
-  // 전자(85, 90): 0.97, 기계(84): 0.96, 화학(28-40): 0.95, 그 외: 0.97
-  if (["85","90"].includes(hs2)) return 0.97;
-  if (["84"].includes(hs2)) return 0.96;
-  const n = parseInt(hs2);
-  if (n >= 28 && n <= 40) return 0.95;
-  return 0.97;
-}
-
-// WO 위험 점수 (50점 만점) — 5개 항목
-function calculateWoRiskScore(input, R) {
-  const scores = {};
-  // 1) 생산지 집중도 (FAO 데이터로): 한 국가 점유율이 매우 높으면 ↑
-  scores.concentration = 5;  // 기본
-  // 실제 점수는 FAO 분포 데이터 필요 — 현재는 중간값
-  // 2) 기후 영향: 농산물 + 위도·기후대 영향 (현재는 가정값)
-  scores.climate = 4;
-  // 3) 질병/재해: 가축·작물 질병 (가정값)
-  scores.disease = 3;
-  // 4) 공급 안정성: 한국 수입 변동 폭
-  const growth = R?.tariff?.growth;
-  if (growth !== null && growth !== undefined && Math.abs(growth) > 50) scores.stability = 8;
-  else if (growth !== null && Math.abs(growth) > 20) scores.stability = 5;
-  else scores.stability = 3;
-  // 5) 대체지 가능성 (FAO 생산국 분산 정도)
-  scores.alternative = 5;
-
-  const total = Object.values(scores).reduce((a, b) => a + b, 0);
-  let level = "low";
-  if (total >= 35) level = "high";
-  else if (total >= 20) level = "mid";
-  return { total, max: 50, scores, level };
-}
-
-// CC/CTH/CTSH 위험 — De Minimis 평가
-function calculateCsrRiskByDeMinimis(input, R) {
-  const fta = R?.psr?.mainHit?.fta || input.fta;
-  const limit = getDeMinimisLimit(fta);
-  // 비원산지 비중을 추정 — TiVA FVA가 가장 직접 지표
-  const fva = R?.rvc?.tivaBenchmark?.fvash;
-  if (fva === null || fva === undefined) {
-    return { available: false, reason: "FVA(외국부가가치) 데이터 없음 — TiVA 호출 필요" };
-  }
-  // De Minimis 산식: 불충족재료 비중 % (FVA를 비원산지 비중 근사값으로 사용)
-  // 참고: 정확한 De Minimis는 BOM 단위로 계산해야 함
-  let level = "low";
-  let label = "🟢 정상";
-  if (fva > 30) { level = "high"; label = "🔴 구조적 불충족 의심"; }
-  else if (fva > limit) { level = "high"; label = "🔴 한도 초과"; }
-  else if (fva > limit * 0.8) { level = "mid"; label = "🟠 경계"; }
-  return {
-    available: true,
-    fva, limit,
-    deMinimisGap: +(fva - limit).toFixed(1),
-    level, label,
-    note: `${fta || 'FTA'} De Minimis 한도 ${limit}% vs 외국부가가치 ${fva.toFixed(1)}% (격차 ${(fva - limit).toFixed(1)}%p)`,
-  };
-}
-
-// RVC/MaxNOM 위험 — ±%p 평가
-function calculateRvcRiskByGap(input, R) {
-  const threshold = R?.rvc?.rvcThreshold;
-  const dva = R?.rvc?.tivaBenchmark?.dvash;
-  if (!threshold || dva === null || dva === undefined) {
-    return { available: false, reason: "RVC 기준 또는 DVA 데이터 없음" };
-  }
-  const gap = +(dva - threshold).toFixed(1);  // (+) 충족 여유, (-) 미달
-  let level = "low";
-  let label = "🟢 충분 여유";
-  if (gap < 0) { level = "high"; label = "🔴 불충족"; }
-  else if (gap < 10) { level = "mid"; label = "🟠 경계 (±0~9%p)"; }
-  return {
-    available: true,
-    threshold, dva, gap,
-    level, label,
-    note: `요구 RVC ${threshold}% vs 산업 평균 DVA ${dva.toFixed(1)}% — 격차 ${gap >= 0 ? '+' : ''}${gap}%p`,
-  };
-}
-
-// PSR 정량 위험 종합
-function calculatePsrQuantitativeRisk(input, R) {
-  const psrCode = R?.psr?.mainHit?.code;
-  const psrKey = normalizePsrCode(psrCode);
-  if (!psrKey) return null;
-
-  const result = { psrKey, psrCode };
-  if (psrKey === "WO") {
-    result.wo = calculateWoRiskScore(input, R);
-  } else if (["CC","CTH","CTSH"].includes(psrKey)) {
-    result.csr = calculateCsrRiskByDeMinimis(input, R);
-  } else if (["RVC","MaxNOM"].includes(psrKey)) {
-    result.rvc = calculateRvcRiskByGap(input, R);
-  }
-  // 조합/선택 PSR 처리
-  if (psrCode && psrCode.includes("AND")) {
-    // AND: 최고 위험 선택
-    const all = [];
-    if (result.wo) all.push(result.wo.level);
-    if (result.csr?.level) all.push(result.csr.level);
-    if (result.rvc?.level) all.push(result.rvc.level);
-    result.combinedLevel = all.includes("high") ? "high" : all.includes("mid") ? "mid" : "low";
-    result.combinationType = "AND (최고 위험 선택)";
-  } else if (psrCode && psrCode.includes("OR")) {
-    // OR: 최저 위험 선택
-    const all = [];
-    if (result.wo) all.push(result.wo.level);
-    if (result.csr?.level) all.push(result.csr.level);
-    if (result.rvc?.level) all.push(result.rvc.level);
-    result.combinedLevel = all.includes("low") ? "low" : all.includes("mid") ? "mid" : "high";
-    result.combinationType = "OR (최저 위험 선택)";
-  }
-  return result;
-}
-
-// ═══════════════════════════════════════════════════════════
 // 실제 위반사례 DB 자동 매칭 (서울본부세관 60選 기반)
 // 입력 케이스와 유사한 실제 결정례를 점수화하여 반환
 // 카테고리 군이 다른 사례는 자동 제외 (농산물↔공산품 혼동 방지)
@@ -7847,9 +7719,6 @@ function runCasesAnalysis(input) {
   // 2) 다각도 평가 — PSR과 별개의 5가지 관점
   const angles = evaluateMultiAngles(input, state.results);
 
-  // 2-2) PSR 정량 위험도 계산 (WO 50점 / De Minimis % / RVC ±%p)
-  const psrQuant = calculatePsrQuantitativeRisk(input, state.results);
-
   // 3) 실제 위반사례 매칭 (서울본부세관 60選)
   const similarCases = findSimilarCases(input, state.results);
 
@@ -7870,7 +7739,6 @@ function runCasesAnalysis(input) {
     status: "ok",
     hs, origin, transit, fta, productName,
     psrEval,
-    psrQuant,
     angles,
     similarCases,
     risk,
@@ -8024,70 +7892,6 @@ function renderCases(r) {
         <div class="sub">PSR + 다각도</div>
       </div></div>
     </div>
-
-    ${(() => {
-      const q = r.psrQuant;
-      if (!q) return '';
-      let cards = '';
-      if (q.wo) {
-        const w = q.wo;
-        const sevColor = w.level === "high" ? '#c0392b' : w.level === "mid" ? '#f59f00' : '#2e7d4a';
-        const sevLabel = w.level === "high" ? '🔴 35-50점 (고위험)' : w.level === "mid" ? '🟠 20-34점 (중위험)' : '🟢 0-19점 (저위험)';
-        cards += `
-          <div class="card mb-2" style="border-left:4px solid ${sevColor};">
-            <div class="card-body py-2 px-3">
-              <strong>📐 WO 정량 위험점수: ${w.total}/${w.max}점 — ${sevLabel}</strong>
-              <table class="table table-sm mb-0 mt-1" style="font-size:0.85rem">
-                <tr><td>생산지 집중도</td><td>${w.scores.concentration}/10</td>
-                    <td>기후 영향</td><td>${w.scores.climate}/10</td>
-                    <td>질병/재해</td><td>${w.scores.disease}/10</td>
-                    <td>공급 안정성</td><td>${w.scores.stability}/10</td>
-                    <td>대체지</td><td>${w.scores.alternative}/10</td></tr>
-              </table>
-              <small class="text-muted">※ FAO·기후 데이터 보강 시 정밀도 향상</small>
-            </div>
-          </div>`;
-      }
-      if (q.csr) {
-        const c = q.csr;
-        if (!c.available) {
-          cards += `<div class="alert alert-secondary"><small><b>📐 De Minimis 정량 평가:</b> ${c.reason}</small></div>`;
-        } else {
-          const sevColor = c.level === "high" ? '#c0392b' : c.level === "mid" ? '#f59f00' : '#2e7d4a';
-          cards += `
-            <div class="card mb-2" style="border-left:4px solid ${sevColor};">
-              <div class="card-body py-2 px-3">
-                <strong>📐 De Minimis 정량 평가 — ${c.label}</strong>
-                <div class="mt-1" style="font-size:0.9rem">${c.note}</div>
-                <small class="text-muted">기준: 한도 ${c.limit}% | 측정값: 외국부가가치 ${c.fva.toFixed(1)}% (TiVA FVA)</small>
-              </div>
-            </div>`;
-        }
-      }
-      if (q.rvc) {
-        const v = q.rvc;
-        if (!v.available) {
-          cards += `<div class="alert alert-secondary"><small><b>📐 RVC ±%p 평가:</b> ${v.reason}</small></div>`;
-        } else {
-          const sevColor = v.level === "high" ? '#c0392b' : v.level === "mid" ? '#f59f00' : '#2e7d4a';
-          cards += `
-            <div class="card mb-2" style="border-left:4px solid ${sevColor};">
-              <div class="card-body py-2 px-3">
-                <strong>📐 RVC ±%p 정량 평가 — ${v.label}</strong>
-                <div class="mt-1" style="font-size:0.9rem">${v.note}</div>
-                <small class="text-muted">충족 기준: +10%p 이상 = 정상 / ±0~9%p = 경계 / 음수 = 불충족</small>
-              </div>
-            </div>`;
-        }
-      }
-      if (q.combinedLevel) {
-        cards += `<div class="alert alert-info"><small><b>${q.combinationType}</b> — 최종 PSR 위험: ${q.combinedLevel === "high" ? "🔴 높음" : q.combinedLevel === "mid" ? "🟠 보통" : "🟢 낮음"}</small></div>`;
-      }
-      if (!cards) return '';
-      return `
-        <h5 class="mt-3">📐 PSR 정량 위험도 (서울세관 PSR 챗봇 v21 산식)</h5>
-        ${cards}`;
-    })()}
 
     <h5 class="mt-3">📋 ${psr?.psrName || 'PSR'} 기반 위반 시나리오 체크리스트</h5>
     ${psrSection}
