@@ -803,7 +803,6 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tariff">⚖️ 세율차</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-bom">🧩 BOM 분석</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-production">🏭 생산 역량</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-supplychain">🌐 공급망</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-laundering">🔍 무역흐름 비교</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cases">📚 위반사례·체크리스트</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ai">🤖 AI 분석 시나리오</button></li>
@@ -858,17 +857,12 @@
       <div id="production-body">
         <div class="pending-box"><div class="icon">⏳</div>HS + 수출국 입력 후 분석 실행</div>
       </div>
-    </div>
-
-    <!-- 탭7: 공급망 -->
-    <div class="tab-pane fade tab-content-pane" id="tab-supplychain">
-      <div class="analyzer-header">
-        <h3 class="title">6. 공급망 투명도 — 원재료→완제품 추적성</h3>
-        <span class="badge bg-secondary badge-status" id="status-supplychain">대기</span>
-      </div>
-      <div id="supplychain-body">
-        <div class="pending-box"><div class="icon">⏳</div>HS 입력 후 분석 실행</div>
-      </div>
+      <details class="card mt-4" id="production-country-indicators">
+        <summary class="card-header">📊 국가별 경제·산업 지표 비교 <span class="badge bg-secondary badge-status ms-2" id="status-supplychain">대기</span></summary>
+        <div class="card-body" id="supplychain-body">
+          <div class="pending-box"><div class="icon">⏳</div>입력 후 분석 실행</div>
+        </div>
+      </details>
     </div>
 
     <!-- 탭8: 세탁 -->
