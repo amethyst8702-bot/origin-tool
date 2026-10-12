@@ -886,7 +886,7 @@
     <!-- 탭9: 부가가치 -->
     <div class="tab-pane fade tab-content-pane" id="tab-rvc">
       <div class="analyzer-header">
-        <h3 class="title">2. 부가가치 미달 스크리너 — RVC 구조적 달성 가능성</h3>
+        <h3 class="title">2. 부가가치 기준·산업 통계 참고</h3>
         <span class="badge bg-secondary badge-status" id="status-rvc">대기</span>
       </div>
       <div id="rvc-body">
@@ -6212,7 +6212,7 @@ function renderLaundering(r) {
 // 탭9: 부가가치 (RVC) 미달 스크리너
 // ═══════════════════════════════════════════════════════════════
 function runRvcAnalysis(input) {
-  const { hs, origin, fta } = input;
+  const { hs, origin, transit, fta } = input;
   if (!hs) return { status: "na", reason: "HS 코드 미입력" };
 
   // PSR 데이터에서 해당 HS+FTA의 RVC 여부 확인 (FTA 없으면 모든 FTA 검색)
@@ -6230,10 +6230,10 @@ function runRvcAnalysis(input) {
       }
     }
     if (psrCode) {
-      isRvc = /RVC|부가가치|MaxNOM/i.test(psrCode) || /부가가치|비원산지/.test(psrDesc);
+      isRvc = /RVC|MC|부가가치|MaxNOM/i.test(psrCode) || /부가가치|비원산지/.test(psrDesc);
       if (isRvc) {
         const rvcMatch = psrDesc.match(/(\d+)\s*%\s*(이상)?/);
-        rvcThreshold = rvcMatch ? parseInt(rvcMatch[1]) : null;
+        rvcThreshold = /MC|MaxNOM/i.test(psrCode) ? null : rvcMatch ? parseInt(rvcMatch[1]) : null;
       }
     }
   }
@@ -6257,35 +6257,10 @@ function runRvcAnalysis(input) {
   else if (mode === "no-psr") modeNote = `HS ${hs6}에 대한 ${fta} PSR 규정 매칭 실패. 산업 평균 부가가치율 참고 정보를 표시합니다.`;
   else if (mode === "rvc-no-threshold") modeNote = `${fta}의 HS ${hs6}는 RVC 기준이나 % 수치 추출 실패. PSR 원문 직접 확인 권장.`;
 
-  // 간이 리스크 평가 (저임금국 + 고가원재료 조합 감지)
-  const lowWageCountries = ["베트남","중국","인도네시아","인도","캄보디아","미얀마","라오스","필리핀","방글라데시"];
-  const isLowWage = lowWageCountries.includes(origin);
-
-  // HS 2단위로 원재료 고가 품목군 추정
+  const isLowWage = false, isHighValue = false;
   const hs2 = hs.slice(0, 2);
-  const highValueChapters = ["71","84","85","87","90"]; // 귀금속, 기계, 전자, 차량, 정밀기기
-  const isHighValue = highValueChapters.includes(hs2);
-
-  let risk = "low", assessment;
-  if (mode === "rvc" || mode === "rvc-no-threshold") {
-    if (isLowWage && isHighValue) {
-      risk = "high";
-      assessment = `🔴 ${origin}(저임금국)에서 고가 원재료 투입 가능성이 높은 품목군(HS ${hs2}류). RVC ${rvcThreshold || "?"}% 기준 미달 위험 큼.`;
-    } else if (isLowWage || isHighValue) {
-      risk = "mid";
-      assessment = `🟡 ${origin}의 임금 수준 또는 원재료 특성상 RVC 미달 가능성 있음. 상세 BOM 검증 필요.`;
-    } else {
-      assessment = `🟢 현 조건에서 RVC 기준 미달 가능성 낮음.`;
-    }
-  } else if (mode === "non-rvc-psr") {
-    assessment = `ℹ ${fta}의 HS ${hs6} 기준은 ${psrCode}(${PSR_CODE_MAP[psrCode]?.label || psrCode}) — RVC 미적용 품목. 부가가치 산업 평균은 참고 정보로 제공됩니다.`;
-  } else if (mode === "no-fta") {
-    assessment = `ℹ FTA 미선택. 한국·국제 산업 평균 부가가치율을 참고 정보로 제공합니다. FTA 선택 후 재분석 시 RVC 기준 비교 가능.`;
-  } else if (mode === "no-psr") {
-    assessment = `ℹ HS ${hs6} 매칭 PSR 없음. 산업 평균 부가가치율 참고 정보 제공.`;
-  } else {
-    assessment = "";
-  }
+  const risk = 'pending';
+  const assessment = `원산지국(생산국) ${origin || '미입력'} → 수출국(FTA 기준) ${transit || '미입력'} → 한국 경로를 검토합니다. ${transit || '수출국'}의 실제 생산공정과 비원산지재료의 HS·가격을 확인해야 합니다. 국가·산업 평균으로 개별 물품의 충족·불충족을 판정하지 않습니다.`;
 
   // ═══ 신규(4단계): OECD TiVA 부가가치 벤치마크 비교 ═══
   let tivaBenchmark = null;
@@ -6299,35 +6274,9 @@ function runRvcAnalysis(input) {
     tivaBenchmark = {
       dvash, fvash, bwfva, fwdva,
       assessment: input.tivaData.assessment,
+      country: origin, iso3: input.tivaData.iso3, sector: input.tivaData.sector, year: input.tivaData.year,
     };
 
-    // 신고 RVC vs TiVA DVA 비교 (RVC threshold가 명시된 경우)
-    if (rvcThreshold !== null && dvash !== null) {
-      const gap = rvcThreshold - dvash;
-      if (gap > 15) {
-        // 신고 기준이 평균 DVA보다 15%p 이상 높음 → 비정상적으로 높은 RVC 신고 의심
-        risk = "high";
-        tivaBenchmark.warning = `🔴 ${fta} 요구 RVC ${rvcThreshold}% > ${origin} 평균 DVA ${dvash.toFixed(1)}% (격차 ${gap.toFixed(1)}%p). 평균 부가가치를 크게 상회한 RVC 신고는 비정상.`;
-      } else if (gap > 5) {
-        risk = risk === "low" ? "mid" : risk;
-        tivaBenchmark.warning = `🟡 ${fta} 요구 RVC ${rvcThreshold}% > ${origin} 평균 DVA ${dvash.toFixed(1)}% (격차 ${gap.toFixed(1)}%p). 충족 가능하나 검증 권고.`;
-      } else if (gap > -10) {
-        tivaBenchmark.warning = `🟢 ${fta} 요구 RVC ${rvcThreshold}% ≈ ${origin} 평균 DVA ${dvash.toFixed(1)}%. 충족 가능성 양호.`;
-      } else {
-        tivaBenchmark.warning = `🟢 ${fta} 요구 RVC ${rvcThreshold}% < ${origin} 평균 DVA ${dvash.toFixed(1)}%. 충족 여유 있음.`;
-      }
-    }
-
-    // 외국부가가치(FVA) 비중이 높으면 비원산지 재료 가능성 ↑
-    if (fvash !== null && fvash > 50) {
-      risk = risk === "low" ? "mid" : "high";
-      tivaBenchmark.fvaWarning = `⚠ ${origin}의 ${input.tivaData.sector} 산업 FVA(외국부가가치) 비중 ${fvash.toFixed(1)}% — 비원산지 재료 비중이 큼.`;
-    }
-  }
-
-  // assessment에 TiVA 결과 통합
-  if (tivaBenchmark && tivaBenchmark.warning) {
-    assessment = tivaBenchmark.warning + ` (기존 평가: ${assessment.replace(/^[🔴🟡🟢]\s*/, '')})`;
   }
 
   // ═══ 신규(4단계-B): KOSIS 한국 산업별 부가가치율 벤치마크 ═══
@@ -6343,37 +6292,14 @@ function runRvcAnalysis(input) {
         isic: indInfo.isic,
         sector: indInfo.sector,
       };
-      // 신고 RVC와 한국 동종 산업 평균 비교
-      if (rvcThreshold !== null) {
-        const koreaGap = rvcThreshold - koreaVa.ratio;
-        if (koreaGap > 20) {
-          koreaBenchmark.warning = `🔴 ${fta} 요구 RVC ${rvcThreshold}%는 한국 동종산업(${indInfo.sector}) 평균 부가가치율(${koreaVa.ratio.toFixed(1)}%)보다 ${koreaGap.toFixed(1)}%p 높음. 한국 제조업도 평균적으로 충족 어려운 수준 — 비정상적 신고 의심.`;
-          if (risk === "low") risk = "mid";
-          else if (risk === "mid") risk = "high";
-        } else if (koreaGap > 10) {
-          koreaBenchmark.warning = `🟡 ${fta} 요구 RVC ${rvcThreshold}%는 한국 동종산업 평균(${koreaVa.ratio.toFixed(1)}%)보다 ${koreaGap.toFixed(1)}%p 높음. 한국 기준에서도 까다로운 수준.`;
-          if (risk === "low") risk = "mid";
-        } else if (koreaGap > -5) {
-          koreaBenchmark.warning = `🟢 ${fta} 요구 RVC ${rvcThreshold}% ≈ 한국 동종산업 평균 ${koreaVa.ratio.toFixed(1)}%. 합리적 수준.`;
-        } else {
-          koreaBenchmark.warning = `🟢 ${fta} 요구 RVC ${rvcThreshold}%가 한국 동종산업 평균(${koreaVa.ratio.toFixed(1)}%)보다 낮아 충족 여유 있음.`;
-        }
-      }
 
-      // TiVA·KOSIS 양방향 비교 (둘 다 있을 때 신고 RVC가 양쪽 모두 초과하면 강력 의심)
-      if (tivaBenchmark && tivaBenchmark.dvash !== null && rvcThreshold !== null) {
-        if (rvcThreshold > tivaBenchmark.dvash + 10 && rvcThreshold > koreaVa.ratio + 10) {
-          koreaBenchmark.dualWarning = `🔴 신고 RVC ${rvcThreshold}%가 ${origin} 평균 DVA(${tivaBenchmark.dvash.toFixed(1)}%) AND 한국 동종산업 평균(${koreaVa.ratio.toFixed(1)}%) 모두 +10%p 이상 상회 — 양 기준 모두 정상 범위 벗어남`;
-          if (risk !== "high") risk = "high";
-        }
-      }
     }
   }
 
   return {
     status: "ok",
     mode, modeNote,
-    hs6, fta, origin, psrCode, psrDesc,
+    hs6, fta, origin, transit, psrCode, psrDesc,
     rvcThreshold,
     isLowWage, isHighValue,
     risk, assessment,
@@ -6405,29 +6331,30 @@ function renderRvc(r) {
         <div class="sub">HS ${r.hs6}</div>
       </div></div>
       <div class="col-md-3"><div class="metric-card">
-        <div class="label">RVC 기준</div>
-        <div class="value">${r.rvcThreshold ? r.rvcThreshold + '%' : '—'}</div>
+        <div class="label">협정상 부가가치·재료가치 기준</div>
+        <div class="value">${/MC|MaxNOM/i.test(r.psrCode) ? 'MC ' + ((r.psrCode.match(/(?:MC|MaxNOM)\s*(\d+)/i) || [])[1] || '원문 확인') + '%' : r.rvcThreshold ? 'RVC ' + r.rvcThreshold + '%' : '원문 확인'}</div>
         <div class="sub">${r.psrCode || (r.mode === 'no-fta' ? 'FTA 미선택' : r.mode === 'no-psr' ? 'PSR 매칭 없음' : '비-RVC')}</div>
       </div></div>
       <div class="col-md-3"><div class="metric-card">
-        <div class="label">수출국 임금 수준</div>
-        <div class="value">${r.isLowWage ? '🟡 저임금국' : '🟢 중고임금국'}</div>
-        <div class="sub">${r.origin || '—'}</div>
+        <div class="label">원산지국(생산국)</div>
+        <div class="value" style="font-size:1.1rem">${_safe(r.origin || '미입력')}</div>
+        <div class="sub">조회 입력의 생산국 가정</div>
       </div></div>
       <div class="col-md-3"><div class="metric-card">
-        <div class="label">원재료 고가성</div>
-        <div class="value">${r.isHighValue ? '🟡 고가' : '🟢 일반'}</div>
-        <div class="sub">HS ${r.hs6.slice(0,2)}류</div>
+        <div class="label">수출국(FTA 기준)</div>
+        <div class="value" style="font-size:1.1rem">${_safe(r.transit || '미입력')}</div>
+        <div class="sub">이 국가의 원산지 자격을 검증</div>
       </div></div>
     </div>
     ${r.assessment ? `
     <div class="conclusion-box">
-      <strong>📌 평가:</strong> ${r.assessment}
+      <strong>📌 검토 범위:</strong> ${r.assessment}
     </div>` : ''}
 
     ${r.tivaBenchmark ? `
       <div class="alert alert-info mt-3" style="border-left:4px solid #0d6efd;">
-        <strong>🌐 OECD TiVA 산업 부가가치 참고지표</strong>
+        <strong>🌐 OECD TiVA 산업 부가가치 참고지표 — ${_safe(r.tivaBenchmark.country || r.origin)}</strong>
+        <div class="mt-1">기준 국가: <b>${_safe(r.tivaBenchmark.country || r.origin)}</b> (${_safe(r.tivaBenchmark.iso3 || '코드 미확인')}) · 산업 코드: <b>${_safe(r.tivaBenchmark.sector || '미확인')}</b> · 통계연도: <b>${_safe(String(r.tivaBenchmark.year || '미확인'))}</b></div>
         <div class="mt-1"><small>국가·산업 수출에 포함된 국내·해외 부가가치 비중 — 해당 거래의 원산지 판정과 구분</small></div>
       </div>
       <table class="table table-sm table-bordered">
@@ -6444,7 +6371,7 @@ function renderRvc(r) {
               <td><small>외국 중간재 사용 정도</small></td></tr>
           <tr><td>전방참여(전세계 재수출)</td>
               <td>${r.tivaBenchmark.fwdva !== null ? r.tivaBenchmark.fwdva.toFixed(1) : '—'}</td>
-              <td><small>높을수록 가공무역·환적 가능성 ↑</small></td></tr>
+              <td><small>자국 부가가치가 해외 생산·수출에 기여하는 정도. 환적·원산지 위반 판정값이 아님</small></td></tr>
         </tbody>
       </table>
 
@@ -6476,7 +6403,7 @@ function renderRvc(r) {
     ${r.koreaBenchmark ? `
       <div class="alert alert-info mt-3" style="border-left:4px solid #c0392b;">
         <strong>🇰🇷 한국 동종산업 평균 부가가치율 (KOSIS·산업연관표)</strong>
-        <div class="mt-1"><small>한국 제조업 평균 — 신고 RVC가 한국 기준에서도 합리적인지 비교</small></div>
+        <div class="mt-1"><small>한국의 생산액 대비 해당 산업에서 창출한 부가가치 비율. TiVA 수출 기준 DVA 및 협정상 RVC와 산식·범위가 다름</small></div>
       </div>
       <table class="table table-sm table-bordered">
         <thead><tr><th>지표</th><th>값</th><th>설명</th></tr></thead>
@@ -6486,13 +6413,7 @@ function renderRvc(r) {
               <td><small>${r.koreaBenchmark.note}</small></td></tr>
           <tr><td>출처</td>
               <td colspan="2"><small>${r.koreaBenchmark.source} (한국은행) · ISIC ${r.koreaBenchmark.isic}</small></td></tr>
-          ${r.rvcThreshold !== null ? `
-          <tr><td>비교</td>
-              <td colspan="2">
-                ${r.fta} 요구 RVC <b>${r.rvcThreshold}%</b> vs 한국 동종 평균 <b>${r.koreaBenchmark.ratio.toFixed(1)}%</b>
-                = 격차 <b>${(r.rvcThreshold - r.koreaBenchmark.ratio).toFixed(1)}%p</b>
-              </td></tr>
-          ` : ''}
+
         </tbody>
       </table>
 
@@ -6507,19 +6428,12 @@ function renderRvc(r) {
         </div>` : ''}
     ` : ''}
 
-    ${r.tivaBenchmark && r.tivaBenchmark.dvash !== null && r.koreaBenchmark ? `
-      <div class="conclusion-box mt-3" style="background:#fff8e1; border-left:4px solid #f59f00;">
-        <strong>📊 종합 부가가치율 비교 (3-way)</strong>
-        <table class="table table-sm mb-0 mt-2" style="background:transparent;">
-          <thead><tr><th>구분</th><th>부가가치율</th><th>해석</th></tr></thead>
-          <tbody>
-            <tr><td>${r.fta} 요구 RVC</td><td><b>${r.rvcThreshold !== null ? r.rvcThreshold + '%' : '—'}</b></td><td><small>FTA 협정 기준선</small></td></tr>
-            <tr><td>${r.origin} 산업 평균 (TiVA)</td><td>${r.tivaBenchmark.dvash.toFixed(1)}%</td><td><small>외국 동종산업 평균 DVA</small></td></tr>
-            <tr><td>한국 산업 평균 (KOSIS)</td><td>${r.koreaBenchmark.ratio.toFixed(1)}%</td><td><small>한국 동종산업 평균</small></td></tr>
-          </tbody>
-        </table>
-      </div>
-    ` : ''}
+    <div class="alert alert-light border mt-3">
+      <strong>이 자료를 어떻게 활용하나요?</strong>
+      <p class="mt-2">TiVA DVA 84%는 해당 국가·산업 수출의 자국 부가가치 비중입니다. 특정 물품의 중국산 가치 84% 또는 벨기에 가치 16%를 뜻하지 않습니다. 한국 산업 부가가치율 30%는 생산액 대비 해당 산업의 부가가치이며 TiVA와 직접 비교하지 않습니다.</p>
+      <p>중국 완제품을 수출국에서 보관·재포장했는지, 중국산 재료를 사용해 실제 제조했는지 확인합니다. 원재료별 HS·원산지·가격, 수출국 생산공정, 완제품 가격과 협정 원문이 필요합니다.</p>
+      <p class="mb-0">MC는 비원산지재료 가치의 최대 허용 비율, RVC는 협정 산식에 따른 역내가치 비율입니다. CTH or MC처럼 선택 기준이면 각 경로와 예외·불인정공정을 확인합니다. 산업 통계로 어느 경로의 충족 여부도 대신 계산하지 않습니다.</p>
+    </div>
 
     ${r.psrDesc ? `
     <div class="mt-3">
@@ -6529,7 +6443,7 @@ function renderRvc(r) {
       </blockquote>
     </div>` : ''}
     <p class="note mt-2">※ 정확한 RVC 계산은 BOM 부품별 단가·원산지 정보가 필요합니다. TiVA·KOSIS는 산업 평균 — 개별 기업 부가가치율과 다를 수 있음.</p>`;
-  setStatus("rvc", r.risk + "위험", "bg-" + (r.risk === "high" ? "danger" : r.risk === "mid" ? "warning" : "success"));
+  setStatus("rvc", "산업 통계 참고 · 개별 판정 유보", "bg-secondary");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8371,7 +8285,7 @@ function renderSummary() {
   const R = state.results;
 
   // 위험도 점수 계산 (가중치 × 탭별 risk) — BOM 비관련 시 가중치 자동 감소
-  const weights = { psr: 0.35, rvc: 0.18, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
+  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
   const riskScore = { high: 100, mid: 50, low: 10 };
   let totalScore = 0, totalWeight = 0;
   for (const [key, weight] of Object.entries(weights)) {
@@ -8719,7 +8633,7 @@ function renderSummary() {
 function buildReportData() {
   const i = state.input;
   const R = state.results;
-  const weights = { psr: 0.35, rvc: 0.18, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
+  const weights = { psr: 0.35, rvc: 0, tariff: 0.13, laundering: 0, production: 0.10, cases: 0.10, bom: 0.04 };
   const riskScore = { high: 100, mid: 50, low: 10 };
   let totalScore = 0, totalWeight = 0;
   const contributingTabs = [];
@@ -9094,18 +9008,7 @@ function buildEvidenceNarrative(D) {
     }
   }
 
-  // 3) TiVA 부가가치 vs RVC 기준 (외국 산업 평균 대비)
-  const tiva = R.rvc?.tivaBenchmark;
-  const rvcThreshold = R.rvc?.rvcThreshold;
-  if (tiva && tiva.dvash !== null && tiva.dvash !== undefined && rvcThreshold) {
-    const gap = rvcThreshold - tiva.dvash;
-    if (gap > 15) {
-      reasons.push(`OECD TiVA(부가가치 무역) 데이터에서, ${i.origin}의 동종 산업 평균 국내부가가치(DVA) 비중은 [[${tiva.dvash.toFixed(1)}%]]로 측정된다. 한편 ${R.psr?.mainHit?.fta || 'FTA'}이 요구하는 RVC 기준은 [[${rvcThreshold}%]]로, ${i.origin} 산업 평균보다 [[${gap.toFixed(1)}%p 높은 수준]]이다. 즉 동종 산업의 평균 기업도 충족이 쉽지 않은 기준으로, 신고 RVC가 평균을 크게 상회한다면 [[과대 신고 가능성]]을 의심할 수 있다.`);
-    } else if (gap > 5) {
-      reasons.push(`OECD TiVA 데이터에 따르면, ${i.origin} 산업 평균 DVA(${tiva.dvash.toFixed(1)}%)와 협정 요구 RVC(${rvcThreshold}%) 간 [[${gap.toFixed(1)}%p의 격차]]가 존재한다. 평균을 다소 상회하는 수준이나 [[충족 가능성에 대한 BOM 단위 검증]]이 권고된다.`);
-    }
-  }
-
+  // 산업 통계는 개별 RVC·최소허용 충족 판정 근거로 사용하지 않음.
   // 4) FVA(외국부가가치) — 비원산지 의존도
   if (tiva && tiva.fvash !== null && tiva.fvash !== undefined) {
     if (tiva.fvash > 50) {
