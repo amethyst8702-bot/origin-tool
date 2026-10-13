@@ -9000,6 +9000,8 @@ function genGlobalContext(D) {
 // 검색·분석한 결과를 근거로 위반 가능성을 설명하는 서술 단락을 생성
 function buildEvidenceNarrative(D) {
   const i = D.i, R = D.R;
+  const tiva = i?.tivaData || null;
+  const rvcThreshold = R.rvc?.rvcThreshold ?? R.psr?.mainHit?.parsed?.rvcThreshold ?? null;
   const reasons = [];
   const fmt = (n, d=0) => Number(n).toLocaleString(undefined, {maximumFractionDigits: d});
 
@@ -10823,6 +10825,7 @@ ${page3}
 
 // HTML 파일 다운로드
 function downloadSummaryHtml() {
+  try {
   const D = buildReportData();
   const i = D.i;
   const html = buildReportHtmlString();
@@ -10831,12 +10834,19 @@ function downloadSummaryHtml() {
   const a = document.createElement("a");
   a.href = url;
   a.download = `정보분석_결과보고서_${i.hs || "report"}_${D.today.replace(/-/g, "")}.html`;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    console.error('HTML 보고서 생성 오류', e);
+    alert('HTML 보고서 생성 오류: ' + e.message);
+  }
 }
 
 // PDF 다운로드 (새 창 + 자동 인쇄 다이얼로그)
 function downloadSummaryPdf() {
+  try {
   const html = buildReportHtmlString();
   const w = window.open("", "_blank", "width=900,height=1200");
   if (!w) {
@@ -10855,6 +10865,10 @@ function downloadSummaryPdf() {
       alert("인쇄 다이얼로그를 열지 못했습니다. 새로 열린 창에서 Ctrl+P를 눌러주세요.");
     }
   }, 400);
+  } catch (e) {
+    console.error('PDF 보고서 생성 오류', e);
+    alert('PDF 보고서 생성 오류: ' + e.message);
+  }
 }
 
 // ╔═══════════════════════════════════════════════════════════════╗
