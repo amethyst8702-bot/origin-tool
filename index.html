@@ -1781,18 +1781,17 @@ function psrFulltextNotice(hit) {
 
 function renderPsrFulltext(hit) {
   const ft = hit?.fullText;
-  if (!ft) return psrFulltextNotice(hit);
-  const label = ft.matchType === 'chapter' ? '해당 류 주변 규정 원문 (개별 예외 포함)' :
-    ft.matchType === 'annex' ? '품목별 원산지 규정 부속서 전체' :
-    ft.matchType === 'exact' ? 'HS6 매칭 원문' : 'HS4 관련 규정 후보';
-  const whole = ft.annexText ? `<details class="mt-2"><summary>${_safe(ft.annexLabel || '부속서')} 전체 원문 보기</summary><pre style="white-space:pre;overflow:auto;max-height:650px">${_safe(ft.annexText)}</pre></details>` : '';
-  const notes = ft.introductoryNotes ? `<details class="mt-2"><summary>부속서 I 도입 주석 보기</summary><pre style="white-space:pre;overflow:auto;max-height:500px">${_safe(ft.introductoryNotes)}</pre></details>` : '';
-  const link = /^https:\/\//.test(ft.sourceUrl || '') ? `<a href="${_safe(ft.sourceUrl)}#page=${parseInt(ft.page) || 1}" target="_blank" rel="noopener">공식 PDF 열기</a>` : '';
+  if (!ft || !['exact', 'hs4'].includes(ft.matchType)) return psrFulltextNotice({
+    ...hit, fullTextError: hit?.fullTextError || '해당 품목의 원산지 결정기준 원문이 아직 연결되지 않았습니다.'
+  });
+  const escapeText = value => _safe(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rawHs = String(hit.hs || state.input?.hs || '').replace(/\D/g, '');
+  const hs6 = rawHs.length === 5 ? rawHs.padStart(6, '0') : rawHs.slice(0, 6);
+  const hsDisplay = hs6.length === 6 ? hs6.slice(0, 4) + '.' + hs6.slice(4) : hs6;
   return `<div class="mt-2 p-2" style="background:#e8f5e9;border-left:3px solid #2e7d4a;border-radius:4px">
-    <strong>📜 협정문 원문 — ${label}</strong>
-    <div class="small mt-1">${_safe(ft.sourceFta)} · PDF p.${_safe(String(ft.page || '미상'))} ${link}</div>
-    ${ft.matchType === 'chapter' || ft.matchType === 'annex' ? `<div class="small mt-1">${_safe(ft.language || '영문')} 원문입니다. 표의 규정 열과 개별 예외를 함께 확인하세요. HS6 정확 매칭 결과는 아닙니다.</div>` : ''}
-    <pre class="mt-2" style="white-space:pre;overflow:auto;max-height:650px;font-size:.82rem">${_safe(ft.ruleText)}</pre>${whole}${notes}
+    <strong>📜 원산지 결정기준 원문 · HS ${escapeText(hsDisplay)}</strong>
+    <div class="mt-2" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7">${escapeText(ft.ruleText)}</div>
+    <div class="small text-muted mt-1">출처: ${escapeText(ft.sourceFta)} · PDF p.${escapeText(String(ft.page || '미상'))}${ft.matchType === 'hs4' ? ' · 해당 호 공통 규정' : ''}</div>
   </div>`;
 }
 
@@ -1830,12 +1829,7 @@ function lookupPsrFulltext(ftaName, hs) {
     const queryHs6 = String(hs).replace(/\D/g, '').slice(0, 6);
     const verified = (ftaData.rules || []).filter(r => r.verified && r.hs === queryHs6 && isUsablePsrRule(r));
     if (verified.length) return {match: 'exact', fta: fullKey, rules: verified.map(r => ({...r, annex_text: ftaData.annex_text, annex_label: ftaData.annex_label}))};
-    const chapter = queryHs6.slice(0, 2);
-    const scoped = ftaData.chapter_pages?.[chapter];
-    return { match: scoped ? 'chapter' : 'annex', fta: fullKey,
-      rules: [{rule_text: scoped?.text || ftaData.annex_text, page: scoped?.page || (fullKey === '한-EU' ? '371–432' : '전체'),
-        source_url: ftaData.source_url, language: ftaData.language || '영문', annex_label: ftaData.annex_label || '부속서 II', annex_text: scoped ? ftaData.annex_text : '',
-        introductory_notes: ftaData.introductory_notes}] };
+    return {error: `HS ${queryHs6}에 해당하는 개별 원산지 결정기준 원문이 아직 연결되지 않았습니다.`};
   }
   if (!window.__PSR_FULLTEXT_DATA__) return {error: 'psr_fulltext.js를 불러오지 못했습니다. index.html과 같은 폴더의 파일 및 업로드 상태를 확인하세요.'};
   if (!Object.keys(_psrFullIndex).length) _buildPsrFullIndex();
@@ -9136,7 +9130,7 @@ function buildEvidenceNarrative(D) {
   // 12) 협정문 풀텍스트 기반 예외조항 직접 인용
   const ft = R.psr?.mainHit?.fullText;
   if (ft && ft.exceptions && ft.exceptions.length > 0) {
-    reasons.push(`${R.psr.mainHit.fta} 협정문(PDF p.${ft.page}) 원문 검색 결과, 본 품목의 원산지 규정에 [[예외조항]]이 명시되어 있다 — "${ft.exceptions.join(' / ').slice(0, 200)}". 해당 조항에 부합하는 원재료가 사용된 경우 일반 세번변경 충족과 별개로 [[예외조항을 통한 원산지 자격 박탈]]이 발생할 수 있어 BOM 단위 검증이 필수다.`);
+    reasons.push(`${R.psr.mainHit.fta} 협정문(PDF p.${ft.page}) 원문 검색 결과, 본 품목의 원산지 규정에 [[예외조항]]이 명시되어 있다 — "${ft.exceptions.join(' / ')}". 해당 조항에 부합하는 원재료가 사용된 경우 일반 세번변경 충족과 별개로 [[예외조항을 통한 원산지 자격 박탈]]이 발생할 수 있어 BOM 단위 검증이 필수다.`);
   }
   if (ft && ft.rvcPct && ft.isAlternative) {
     reasons.push(`${R.psr.mainHit.fta} 협정문 원문에서 본 품목은 [[선택기준(Alternative Rule)]]을 채택하고 있다 — 세번변경 또는 RVC ${ft.rvcPct}% 중 [[하나만 충족]]하면 원산지 인정 가능. 다만 RVC 산정 방식(공제법·집적법)에 따라 결과가 달라질 수 있으니, 유리한 방식 선택과 BOM 정확 산정이 필요하다.`);
@@ -9398,7 +9392,7 @@ function parseAiAnalysis() {
 
     // 배경이 여전히 비어있으면 rest 전체를 배경으로 (최후 fallback)
     if (!cur.background && !cur.reason && !cur.evidence && !cur.issue && rest.trim()) {
-      cur.background = stripBrackets(rest.trim().slice(0, 300));
+      cur.background = stripBrackets(rest.trim());
     }
     // rest도 없고 배경도 없으면 headLine 전체를 배경으로
     if (!cur.background && !cur.hs_flow && !cur.psr) {
@@ -9867,6 +9861,46 @@ function parseBoldToHtml(text) {
 }
 
 // 디자인 D HTML 문자열 생성 (프리뷰와 동일 CSS)
+// Report-only sentence ending normalization; leave UI text and source data intact.
+function nominalizeReportText(text) {
+  const replacements = [
+    [/해야 한다(?=[.!?。]|$)/g, '해야 함'],
+    [/하였습니다(?=[.!?。]|$)/g, '하였음'],
+    [/되었습니다(?=[.!?。]|$)/g, '되었음'],
+    [/했습니다(?=[.!?。]|$)/g, '하였음'],
+    [/됩니다(?=[.!?。]|$)/g, '됨'],
+    [/합니다(?=[.!?。]|$)/g, '함'],
+    [/입니다(?=[.!?。]|$)/g, '임'],
+    [/있습니다(?=[.!?。]|$)/g, '있음'],
+    [/없습니다(?=[.!?。]|$)/g, '없음'],
+    [/한다(?=[.!?。]|$)/g, '함'],
+    [/된다(?=[.!?。]|$)/g, '됨'],
+    [/하다(?=[.!?。]|$)/g, '함'],
+    [/였다(?=[.!?。]|$)/g, '였음'],
+    [/했다(?=[.!?。]|$)/g, '하였음'],
+    [/됐다(?=[.!?。]|$)/g, '되었음'],
+    [/었다(?=[.!?。]|$)/g, '었음'],
+    [/았다(?=[.!?。]|$)/g, '았음'],
+    [/이다(?=[.!?。]|$)/g, '임'],
+    [/있다(?=[.!?。]|$)/g, '있음'],
+    [/없다(?=[.!?。]|$)/g, '없음'],
+    [/높다(?=[.!?。]|$)/g, '높음'],
+    [/낮다(?=[.!?。]|$)/g, '낮음'],
+    [/크다(?=[.!?。]|$)/g, '큼'],
+    [/어렵다(?=[.!?。]|$)/g, '어려움'],
+    [/필수다(?=[.!?。]|$)/g, '필수임'],
+    [/증거다(?=[.!?。]|$)/g, '증거임'],
+    [/평가된다(?=\s*[—–])/g, '평가됨'],
+    [/평가된다(?=[.!?。]|$)/g, '평가됨']
+  ];
+  return replacements.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+}
+function nominalizeReportHtml(html) {
+  // Process body text nodes only, retaining markup, CSS, numerical values and links.
+  return html.replace(/(<body[^>]*>)([\s\S]*?)(<\/body>)/i, (_, open, body, close) =>
+    open + body.split(/(<[^>]+>)/g).map(part => part.startsWith('<') ? part : nominalizeReportText(part)).join('') + close);
+}
+
 function buildReportHtmlString() {
   const D = buildReportData();
   const i = D.i, R = D.R;
@@ -10191,7 +10225,7 @@ body { counter-reset: pagenum; }
 
 /* 서술형 */
 .narrative { font-size: 10pt; line-height: 1.75; margin: 3mm 0 3mm 12pt;
-             text-align: justify; text-indent: 6pt; }
+             text-align: justify; text-indent: 6pt; overflow: visible; height: auto; overflow-wrap: anywhere; break-inside: auto; }
 .narrative + .narrative { margin-top: 2mm; }
 
 /* 강조 */
@@ -10366,7 +10400,7 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
 
   ${R.psr && R.psr.status === "ok" ? `
   <div class="l1">(FTA 원산지 기준) ${_safe(R.psr.mainHit.fta)} 협정 적용 PSR — <span class="key">${_safe(psrLabel)}</span></div>
-  <div class="l2">PSR 요약: "${_safe(psrDesc.length > 200 ? psrDesc.slice(0, 200) + "…" : psrDesc)}"</div>
+  <div class="l2">PSR 요약: "${_safe(psrDesc)}"</div>
   ${renderPsrFulltext(R.psr.mainHit)}
   ${R.psr.mainHit.code === "WO" ? `<div class="l3">${_safe(i.origin)}산 원재료를 ${_safe(i.transit || "경유국")}에서 가공·포장하는 공정은 <span class="em-red">완전생산으로 인정 불가</span></div>` : ""}
   ` : `<div class="l1">(FTA 원산지 기준) PSR 조회 불가</div>`}
@@ -10438,11 +10472,11 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
           const lvlIcon = lvl === "high" ? "🔴" : lvl === "mid" ? "🟠" : lvl === "low" ? "🟢" : "⚪";
           const lvlText = lvl === "high" ? "높음" : lvl === "mid" ? "보통" : lvl === "low" ? "낮음" : "—";
           const lvlColor = lvl === "high" ? "#c0392b" : lvl === "mid" ? "#b8770a" : lvl === "low" ? "#2e7d4a" : "#666";
-          const bg = s.background ? `<br><small style="color:#666;">${_safe(s.background).slice(0, 110)}</small>` : '';
+          const bg = s.background ? `<br><small style="color:#666;">${_safe(s.background)}</small>` : '';
           return `
             <tr>
               <td style="vertical-align:top; padding:6px 8px;"><b>${idx+1}. ${_safe(s.name)}</b>${bg}</td>
-              <td style="vertical-align:top; padding:6px 8px;">${_safe(s.psr || '—').slice(0, 160)}</td>
+              <td style="vertical-align:top; padding:6px 8px;">${_safe(s.psr || '—')}</td>
               <td style="vertical-align:top; padding:6px 8px; text-align:center; color:${lvlColor}; font-weight:700;">${lvlIcon} ${lvlText}</td>
             </tr>`;
         }).join('');
@@ -10544,7 +10578,7 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
                       : lvl === "mid"  ? "[[위반 가능성 보통]]"
                       : lvl === "low"  ? "[[위반 가능성 낮음]]" : "";
       aiSentences.push(
-        `산업·국가 도메인 지식 기반 AI 추론(Gemini) 결과로는 ${lvlPhrase} 평가된다 — ${ai.verdictText.slice(0, 350)}`
+        `산업·국가 도메인 지식 기반 AI 추론(Gemini) 결과로는 ${lvlPhrase} 평가된다 — ${ai.verdictText}`
       );
       // 데이터-AI 평가가 다를 경우 명시 (이게 사용자가 짚은 핵심 — 모순 노출)
       if (D.aiAdjusted) {
@@ -10561,9 +10595,9 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
         .replace(/^#+\s*/gm, '');
       // 응답 후반 1/3 (보통 종합판단·결론 위치)
       const tailStart = Math.floor(text.length * 0.6);
-      const tail = text.slice(tailStart, tailStart + 600).trim();
+      const tail = text.trim();
       aiSentences.push(
-        `산업·국가 도메인 지식 기반 AI 추론(Gemini) 결과 요약: ${tail}${text.length > tailStart + 600 ? '…' : ''}`
+        `산업·국가 도메인 지식 기반 AI 추론(Gemini) 결과 요약: ${tail}`
       );
     } else if (stateAi.error) {
       const isQuota = /429|quota|rate|한도|limit/i.test(stateAi.error);
@@ -10707,7 +10741,7 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
                      : ai.verdictLevel === "mid"  ? "[[일부 시나리오에서 위반 가능성 시사]]"
                      : ai.verdictLevel === "low"  ? "위반 가능성 낮음 — 단, 다음 시나리오 검증 필요"
                      : "추가 검증 필요";
-      sentences.push(`산업·국가 도메인 지식에 기반한 AI 추론에서는 ${lvlPhrase} — ${ai.verdictText.slice(0, 280)}`);
+      sentences.push(`산업·국가 도메인 지식에 기반한 AI 추론에서는 ${lvlPhrase} — ${ai.verdictText}`);
     }
     if (sentences.length === 0) return '';
     return sentences.map(s => `<p class="narrative">${parseBoldToHtml(s)}</p>`).join('');
@@ -10732,11 +10766,11 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
       // 가장 핵심적인 한 문장만 추출 — 우선순위: violation_risk → background 첫 문장
       let oneLiner = '';
       if (s.violation_risk) {
-        oneLiner = _safe(s.violation_risk).slice(0, 90);
+        oneLiner = _safe(s.violation_risk);
       } else if (s.background) {
         // 첫 마침표/줄바꿈까지만
         const firstSent = _safe(s.background).split(/[.。\n]/)[0];
-        oneLiner = firstSent.slice(0, 90);
+        oneLiner = _safe(s.background);
       }
       return `
       <div style="margin-top:5px; padding:5px 10px; background:#fff8e1; border-left:3px solid ${severityIcon === '🔴' ? '#c0392b' : '#f59f00'}; border-radius:3px; break-inside: avoid;">
@@ -10746,8 +10780,8 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
     };
 
     const allScen = [
-      ...highs.slice(0, 3).map((s, i) => renderScen(s, i, '🔴')),
-      ...mids.slice(0, 3).map((s, i) => renderScen(s, highs.length + i, '🟠')),
+      ...highs.map((s, i) => renderScen(s, i, '🔴')),
+      ...mids.map((s, i) => renderScen(s, highs.length + i, '🟠')),
     ].join('');
 
     return `
@@ -10782,19 +10816,19 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
     if (ai && ai.recommendations && ai.recommendations.length > 0) {
       blocks.push(`
         <div class="l1">(AI 추론 기반 우선 확보 자료)</div>
-        ${ai.recommendations.slice(0, 5).map(r => `<div class="l2"><span class="key">${parseBoldToHtml(r.slice(0, 200))}</span></div>`).join('')}`);
+        ${ai.recommendations.map(r => `<div class="l2"><span class="key">${parseBoldToHtml(r)}</span></div>`).join('')}`);
     }
 
     // (b) high/mid 시나리오마다 — 시나리오를 부정·확인하기 위한 검증 절차
     const highs = D.aiHighScenarios || [];
     const mids = D.aiMidScenarios || [];
     if (highs.length > 0 || mids.length > 0) {
-      const scenLines = [...highs, ...mids].slice(0, 5).map((s, idx) => {
+      const scenLines = [...highs, ...mids].map((s, idx) => {
         // 시나리오 이름·배경에서 검증 항목 추론
         const verifyHint = (s.psr && s.psr.length > 10)
-          ? `PSR 측면 검증 — ${s.psr.slice(0, 120)}`
+          ? `PSR 측면 검증 — ${s.psr}`
           : `시나리오 부정 자료 확보 (공정기록·생산일지·BOM)`;
-        return `<div class="l2"><span class="key">[${(s.violation_level || s.likelihood_level) === 'high' ? '🔴' : '🟠'} ${_safe(s.name).slice(0, 30)}]</span> ${parseBoldToHtml(verifyHint)}</div>`;
+        return `<div class="l2"><span class="key">[${(s.violation_level || s.likelihood_level) === 'high' ? '🔴' : '🟠'} ${_safe(s.name)}]</span> ${parseBoldToHtml(verifyHint)}</div>`;
       }).join('');
       blocks.push(`
         <div class="l1">(시나리오별 검증 절차 — AI 도출 위험 시나리오 부정 자료 확보)</div>
@@ -10816,7 +10850,7 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
   <div class="page-num"></div>
 </div>`;
 
-  return `<!DOCTYPE html>
+  return nominalizeReportHtml(`<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -10830,7 +10864,7 @@ ${page2}
 ${bomPage}
 ${page3}
 </body>
-</html>`;
+</html>`);
 }
 
 // HTML 파일 다운로드
