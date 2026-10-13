@@ -992,7 +992,7 @@ const FTA_COUNTRY_MAP = {
 //   ※ 누락 사유: 이미지 PDF / CID 폰트 인코딩 / 표 구조 비정형 등으로 자동 추출 실패
 const FTA_FULLTEXT_STATUS = {
   // 풀텍스트 추출 완료 (psr_fulltext.js에 포함)
-  "한-EU":         { hasFulltext: true,  ruleCount: 12021 },
+  "한-EU":         { hasFulltext: true, ruleCount: 0, scope: "부속서 II 영문 전체" },
   "한-인도":       { hasFulltext: true,  ruleCount: 17035 },
   "RCEP":          { hasFulltext: true,  ruleCount: 5237 },
   "한-페루":       { hasFulltext: true,  ruleCount: 4202 },
@@ -1767,6 +1767,35 @@ const FULLTEXT_FTA_MAP = {
   "한-캄보디아": "한-인도네시아 또는 한-캄보디아",
 };
 
+function isUsablePsrRule(rule) {
+  const text = String(rule?.rule_text || '').trim();
+  return text.length >= 8 && /[가-힣A-Za-z]/.test(text) &&
+    /제조|생산|원산지|비원산지|세번|부가가치|공장도|완전생산|manufactur|originat|wholly obtained|processing|change.*heading/i.test(text);
+}
+
+function psrFulltextNotice(hit) {
+  const reason = hit?.fullTextError || '협정 원문 데이터가 확인되지 않았습니다.';
+  return `<div class="mt-2 p-2" style="background:#fff8e1;border-left:3px solid #f0a020">
+    <strong>📜 협정문 원문 확인 불가</strong><div class="small">${_safe(reason)}</div></div>`;
+}
+
+function renderPsrFulltext(hit) {
+  const ft = hit?.fullText;
+  if (!ft) return psrFulltextNotice(hit);
+  const label = ft.matchType === 'chapter' ? '해당 류 주변 규정 원문 (개별 예외 포함)' :
+    ft.matchType === 'annex' ? '품목별 원산지 규정 부속서 전체' :
+    ft.matchType === 'exact' ? 'HS6 매칭 원문' : 'HS4 관련 규정 후보';
+  const whole = ft.annexText ? `<details class="mt-2"><summary>부속서 II 전체 원문 보기</summary><pre style="white-space:pre;overflow:auto;max-height:650px">${_safe(ft.annexText)}</pre></details>` : '';
+  const notes = ft.introductoryNotes ? `<details class="mt-2"><summary>부속서 I 도입 주석 보기</summary><pre style="white-space:pre;overflow:auto;max-height:500px">${_safe(ft.introductoryNotes)}</pre></details>` : '';
+  const link = /^https:\/\//.test(ft.sourceUrl || '') ? `<a href="${_safe(ft.sourceUrl)}#page=${parseInt(ft.page) || 1}" target="_blank" rel="noopener">공식 PDF 열기</a>` : '';
+  return `<div class="mt-2 p-2" style="background:#e8f5e9;border-left:3px solid #2e7d4a;border-radius:4px">
+    <strong>📜 협정문 원문 — ${label}</strong>
+    <div class="small mt-1">${_safe(ft.sourceFta)} · PDF p.${_safe(String(ft.page || '미상'))} ${link}</div>
+    ${ft.matchType === 'chapter' || ft.matchType === 'annex' ? '<div class="small mt-1">영문 원문입니다. 표의 (3) 또는 (4) 열과 개별 예외를 함께 확인하세요. HS6 정확 매칭 결과는 아닙니다.</div>' : ''}
+    <pre class="mt-2" style="white-space:pre;overflow:auto;max-height:650px;font-size:.82rem">${_safe(ft.ruleText)}</pre>${whole}${notes}
+  </div>`;
+}
+
 // 풀텍스트 인덱스 (FTA + HS prefix → 규정 데이터)
 const _psrFullIndex = {};
 function _buildPsrFullIndex() {
@@ -1775,13 +1804,15 @@ function _buildPsrFullIndex() {
   for (const [ftaName, ftaData] of Object.entries(data.ftas)) {
     _psrFullIndex[ftaName] = {};
     for (const rule of (ftaData.rules || [])) {
-      if (!rule.hs) continue;
-      const hs6 = rule.hs.slice(0, 6);
+      if (!rule.hs || !isUsablePsrRule(rule)) continue;
+      const ruleHs = String(rule.hs).replace(/\D/g, "");
+      const hs6 = ruleHs.slice(0, 6);
       // HS6 별 인덱스 (다중 매칭 가능)
       if (!_psrFullIndex[ftaName][hs6]) _psrFullIndex[ftaName][hs6] = [];
       _psrFullIndex[ftaName][hs6].push(rule);
       // HS4 fallback 인덱스
-      const hs4 = rule.hs.slice(0, 4);
+      if (ruleHs.length !== 4) continue;
+      const hs4 = ruleHs.slice(0, 4);
       const key4 = "hs4:" + hs4;
       if (!_psrFullIndex[ftaName][key4]) _psrFullIndex[ftaName][key4] = [];
       _psrFullIndex[ftaName][key4].push(rule);
@@ -1794,15 +1825,28 @@ function _buildPsrFullIndex() {
 function lookupPsrFulltext(ftaName, hs) {
   if (!hs || !ftaName) return null;
   const fullKey = FULLTEXT_FTA_MAP[ftaName] || ftaName;
+  const ftaData = window.__PSR_FULLTEXT_DATA__?.ftas?.[fullKey];
+  if (ftaData?.annex_text) {
+    const chapter = String(hs).replace(/\D/g, '').slice(0, 2);
+    const scoped = ftaData.chapter_pages?.[chapter];
+    return { match: scoped ? 'chapter' : 'annex', fta: fullKey,
+      rules: [{rule_text: scoped?.text || ftaData.annex_text, page: scoped?.page || '371–432',
+        source_url: ftaData.source_url, annex_text: scoped ? ftaData.annex_text : '',
+        introductory_notes: ftaData.introductory_notes}] };
+  }
+  if (!window.__PSR_FULLTEXT_DATA__) return {error: 'psr_fulltext.js를 불러오지 못했습니다. index.html과 같은 폴더의 파일 및 업로드 상태를 확인하세요.'};
+  if (!Object.keys(_psrFullIndex).length) _buildPsrFullIndex();
   const idx = _psrFullIndex[fullKey];
-  if (!idx) return { error: `${ftaName} 풀텍스트 미보유` };
+  if (!idx) return { error: `${ftaName} 원문 데이터 미보유` };
   const hs6 = hs.replace(/\D/g, "").slice(0, 6);
   const hs4 = hs6.slice(0, 4);
   // HS6 정확 매칭
   if (idx[hs6] && idx[hs6].length > 0) {
     return { match: "exact", rules: idx[hs6], fta: fullKey };
   }
-  // HS4 fallback
+  const storedExact = (ftaData?.rules || []).filter(r => String(r.hs).replace(/\D/g, '').slice(0, 6) === hs6);
+  if (storedExact.length) return {error: `HS ${hs6} 원문 데이터 오류: 숫자·품명 등 규정이 아닌 추출 내용을 제외했습니다.`};
+  // HS4 fallback: only actual four-digit rules, not neighbouring subheadings.
   if (idx["hs4:" + hs4] && idx["hs4:" + hs4].length > 0) {
     return { match: "hs4", rules: idx["hs4:" + hs4].slice(0, 5), fta: fullKey };
   }
@@ -2318,7 +2362,7 @@ const state = {
     box.className = "alert alert-danger";
     box.innerHTML = `<span class="status-dot status-fail"></span>
       <strong>데이터 로드 실패</strong><br>
-      <small>HTML과 같은 폴더에 <code>data/tariff_rates.js</code>, <code>data/import_volume.js</code>, <code>data/psr_by_fta.js</code>가 있는지 확인해 주세요.</small>`;
+      <small>로드하지 못한 필수 데이터: ${[!tariffArr && 'tariff_rates.js', !importArr && 'import_volume.js', !hasPsr && 'psr_by_fta.js'].filter(Boolean).map(name => '<code>' + name + '</code>').join(', ')}<br>위 파일을 index.html과 같은 폴더에 올린 뒤 새로고침해 주세요.</small>`;
   }
 })();
 
@@ -4834,6 +4878,9 @@ function runPsrAnalysis(input) {
         isAlternative: r0.is_alternative || false,
         page: r0.page,
         sourceFta: fullLookup.fta,
+        sourceUrl: r0.source_url || '',
+        annexText: r0.annex_text || '',
+        introductoryNotes: r0.introductory_notes || '', 
       };
       // 예외조항이 풀텍스트에서 더 풍부하면 parsed에 반영
       // (parsePsrText 결과 객체는 exceptionText: string, hasException: bool 형태)
@@ -4857,6 +4904,7 @@ function runPsrAnalysis(input) {
       deMinimis,
       cumulation,
       fullText,
+      fullTextError: fullLookup?.error || null,
     };
   });
 
@@ -5034,20 +5082,15 @@ function renderPsr(r) {
 
   body.innerHTML = `
     <div class="row g-3 mb-3">
-      <div class="col-md-4"><div class="metric-card">
+      <div class="col-md-6"><div class="metric-card">
         <div class="label">주요 FTA</div>
         <div class="value" style="font-size:1.2rem">${main.fta}</div>
         <div class="sub">HS ${main.hs}</div>
       </div></div>
-      <div class="col-md-4"><div class="metric-card">
+      <div class="col-md-6"><div class="metric-card">
         <div class="label">원산지 결정 기준</div>
         <div class="value" style="font-size:1.2rem">${main.codeLabel}</div>
         <div class="sub">${main.codeNote}</div>
-      </div></div>
-      <div class="col-md-4"><div class="metric-card">
-        <div class="label">원산지 충족 판정</div>
-        <div class="value"><span class="risk-badge-na">⚪ 별도 검증 필요</span></div>
-        <div class="sub">본 탭은 기준 조회 결과입니다. 실제 원재료·공정에 대한 충족 판정은 아닙니다.</div>
       </div></div>
     </div>
 
@@ -5076,24 +5119,7 @@ function renderPsr(r) {
         <div class="mb-2">① ${step1}</div>
         <div class="mb-2">② ${step2}</div>
         <div class="mb-0">③ <strong>저장된 PSR 요약:</strong> <small>${main.desc}</small></div>
-        ${main.fullText ? `
-        <div class="mt-2 p-2" style="background:#e8f5e9; border-left:3px solid #2e7d4a; border-radius:4px;">
-          <strong>📜 협정문 원문 (PDF 풀텍스트):</strong>
-          <small class="d-block mt-1" style="white-space:pre-wrap">${_safe(main.fullText.ruleText)}</small>
-          <small class="text-muted">출처: ${main.fullText.sourceFta} 협정문 PDF p.${main.fullText.page} · ${main.fullText.matchType === 'exact' ? 'HS6 정확 매칭' : 'HS4 근사 매칭'}</small>
-        </div>` : (() => {
-          // 풀텍스트가 없는 FTA — 사유 안내 + 공식 출처 링크
-          const ftaName = main.fta;
-          const status = FTA_FULLTEXT_STATUS[ftaName];
-          if (!status || status.hasFulltext) return '';
-          return `
-            <div class="mt-2 p-2" style="background:#fff8e1; border-left:3px solid #f0a020; border-radius:4px;">
-              <strong>📜 협정문 원문 — 본 도구 풀텍스트 미보유</strong>
-              <small class="d-block mt-1">사유: ${status.missingReason}</small>
-              <small class="d-block mt-1">현재 분석은 <b>PSR 코드 매핑</b>(${status.ruleCount ? status.ruleCount + '건' : '관세청 통합 분류표'}) 기반으로 수행되었으며, <b>원문 인용은 공식 출처에서 직접 확인</b>이 필요합니다.</small>
-              <small class="d-block mt-2"><a href="${status.url}" target="_blank" rel="noopener">▶ 산업통상자원부 FTA 포털 (${ftaName}) 바로가기</a></small>
-            </div>`;
-        })()}
+        ${renderPsrFulltext(main)}
       </div>
     </div>
 
@@ -5809,7 +5835,7 @@ async function callGeminiAnalysis() {
       psr_code: R.psr?.mainHit?.code,
       psr_label: R.psr?.mainHit?.codeLabel,
       psr_desc: R.psr?.mainHit?.desc || null,
-      psr_fulltext: R.psr?.mainHit?.fullText?.ruleText || null,
+      psr_fulltext: ["chapter", "annex"].includes(R.psr?.mainHit?.fullText?.matchType) ? null : (R.psr?.mainHit?.fullText?.ruleText || null),
       psr_lookup: { requestedFta: i.fta, matchedFta: R.psr?.mainHit?.fta, inputHs: i.hs, matchedHs: R.psr?.mainHit?.hs, sourceHsYear: R.psr?.mainHit?.year || null, hsConversionVerified: false },
       psr_exceptions: R.psr?.mainHit?.fullText?.exceptions || [],
       tariff_diff: R.tariff?.rateDiff,
@@ -10329,19 +10355,7 @@ table.info .risk-cell { background: #fce4e4; font-weight: 700; color: #c0392b; }
   ${R.psr && R.psr.status === "ok" ? `
   <div class="l1">(FTA 원산지 기준) ${_safe(R.psr.mainHit.fta)} 협정 적용 PSR — <span class="key">${_safe(psrLabel)}</span></div>
   <div class="l2">PSR 요약: "${_safe(psrDesc.length > 200 ? psrDesc.slice(0, 200) + "…" : psrDesc)}"</div>
-  ${R.psr.mainHit.fullText ? `
-  <div class="l2">협정문 원문(PDF): "<span style="font-style:italic">${_safe(R.psr.mainHit.fullText.ruleText.slice(0, 350))}${R.psr.mainHit.fullText.ruleText.length > 350 ? '…' : ''}</span>"</div>
-  ${R.psr.mainHit.fullText.exceptions.length > 0 ? `<div class="l3"><span class="em-red">⚠ 예외조항</span>: ${_safe(R.psr.mainHit.fullText.exceptions.join(' / '))}</div>` : ''}
-  <div class="l4">출처: ${_safe(R.psr.mainHit.fullText.sourceFta)} 협정문 PDF p.${R.psr.mainHit.fullText.page}</div>
-  ` : (() => {
-    // 풀텍스트 누락 FTA — 사유 + 공식 출처 안내
-    const status = FTA_FULLTEXT_STATUS[R.psr.mainHit.fta];
-    if (!status || status.hasFulltext) return '';
-    return `<div class="l3" style="background:#fff8e1; border-left:3px solid #f0a020; padding:6px 10px; border-radius:3px; margin-top:4px;">
-      <b>📜 협정문 원문 미보유</b> — ${_safe(status.missingReason)}.
-      현재 분석은 PSR 코드 매핑 기반이며, 원문 인용은 공식 출처 (<a href="${status.url}" target="_blank">${_safe(R.psr.mainHit.fta)} FTA 포털</a>)에서 확인 필요.
-    </div>`;
-  })()}
+  ${renderPsrFulltext(R.psr.mainHit)}
   ${R.psr.mainHit.code === "WO" ? `<div class="l3">${_safe(i.origin)}산 원재료를 ${_safe(i.transit || "경유국")}에서 가공·포장하는 공정은 <span class="em-red">완전생산으로 인정 불가</span></div>` : ""}
   ` : `<div class="l1">(FTA 원산지 기준) PSR 조회 불가</div>`}
 
