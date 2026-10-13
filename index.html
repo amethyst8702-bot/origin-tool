@@ -1769,7 +1769,7 @@ const FULLTEXT_FTA_MAP = {
 
 function isUsablePsrRule(rule) {
   const text = String(rule?.rule_text || '').trim();
-  return text.length >= 8 && /[가-힣A-Za-z]/.test(text) &&
+  return text.length >= 4 && /[가-힣A-Za-z]/.test(text) &&
     /제조|생산|원산지|비원산지|세번|부가가치|공장도|완전생산|manufactur|originat|wholly obtained|processing|change.*heading/i.test(text);
 }
 
@@ -1785,13 +1785,13 @@ function renderPsrFulltext(hit) {
   const label = ft.matchType === 'chapter' ? '해당 류 주변 규정 원문 (개별 예외 포함)' :
     ft.matchType === 'annex' ? '품목별 원산지 규정 부속서 전체' :
     ft.matchType === 'exact' ? 'HS6 매칭 원문' : 'HS4 관련 규정 후보';
-  const whole = ft.annexText ? `<details class="mt-2"><summary>부속서 II 전체 원문 보기</summary><pre style="white-space:pre;overflow:auto;max-height:650px">${_safe(ft.annexText)}</pre></details>` : '';
+  const whole = ft.annexText ? `<details class="mt-2"><summary>${_safe(ft.annexLabel || '부속서')} 전체 원문 보기</summary><pre style="white-space:pre;overflow:auto;max-height:650px">${_safe(ft.annexText)}</pre></details>` : '';
   const notes = ft.introductoryNotes ? `<details class="mt-2"><summary>부속서 I 도입 주석 보기</summary><pre style="white-space:pre;overflow:auto;max-height:500px">${_safe(ft.introductoryNotes)}</pre></details>` : '';
   const link = /^https:\/\//.test(ft.sourceUrl || '') ? `<a href="${_safe(ft.sourceUrl)}#page=${parseInt(ft.page) || 1}" target="_blank" rel="noopener">공식 PDF 열기</a>` : '';
   return `<div class="mt-2 p-2" style="background:#e8f5e9;border-left:3px solid #2e7d4a;border-radius:4px">
     <strong>📜 협정문 원문 — ${label}</strong>
     <div class="small mt-1">${_safe(ft.sourceFta)} · PDF p.${_safe(String(ft.page || '미상'))} ${link}</div>
-    ${ft.matchType === 'chapter' || ft.matchType === 'annex' ? '<div class="small mt-1">영문 원문입니다. 표의 (3) 또는 (4) 열과 개별 예외를 함께 확인하세요. HS6 정확 매칭 결과는 아닙니다.</div>' : ''}
+    ${ft.matchType === 'chapter' || ft.matchType === 'annex' ? `<div class="small mt-1">${_safe(ft.language || '영문')} 원문입니다. 표의 규정 열과 개별 예외를 함께 확인하세요. HS6 정확 매칭 결과는 아닙니다.</div>` : ''}
     <pre class="mt-2" style="white-space:pre;overflow:auto;max-height:650px;font-size:.82rem">${_safe(ft.ruleText)}</pre>${whole}${notes}
   </div>`;
 }
@@ -1827,11 +1827,14 @@ function lookupPsrFulltext(ftaName, hs) {
   const fullKey = FULLTEXT_FTA_MAP[ftaName] || ftaName;
   const ftaData = window.__PSR_FULLTEXT_DATA__?.ftas?.[fullKey];
   if (ftaData?.annex_text) {
-    const chapter = String(hs).replace(/\D/g, '').slice(0, 2);
+    const queryHs6 = String(hs).replace(/\D/g, '').slice(0, 6);
+    const verified = (ftaData.rules || []).filter(r => r.verified && r.hs === queryHs6 && isUsablePsrRule(r));
+    if (verified.length) return {match: 'exact', fta: fullKey, rules: verified.map(r => ({...r, annex_text: ftaData.annex_text, annex_label: ftaData.annex_label}))};
+    const chapter = queryHs6.slice(0, 2);
     const scoped = ftaData.chapter_pages?.[chapter];
     return { match: scoped ? 'chapter' : 'annex', fta: fullKey,
-      rules: [{rule_text: scoped?.text || ftaData.annex_text, page: scoped?.page || '371–432',
-        source_url: ftaData.source_url, annex_text: scoped ? ftaData.annex_text : '',
+      rules: [{rule_text: scoped?.text || ftaData.annex_text, page: scoped?.page || (fullKey === '한-EU' ? '371–432' : '전체'),
+        source_url: ftaData.source_url, language: ftaData.language || '영문', annex_label: ftaData.annex_label || '부속서 II', annex_text: scoped ? ftaData.annex_text : '',
         introductory_notes: ftaData.introductory_notes}] };
   }
   if (!window.__PSR_FULLTEXT_DATA__) return {error: 'psr_fulltext.js를 불러오지 못했습니다. index.html과 같은 폴더의 파일 및 업로드 상태를 확인하세요.'};
@@ -1850,7 +1853,7 @@ function lookupPsrFulltext(ftaName, hs) {
   if (idx["hs4:" + hs4] && idx["hs4:" + hs4].length > 0) {
     return { match: "hs4", rules: idx["hs4:" + hs4].slice(0, 5), fta: fullKey };
   }
-  return { error: `HS ${hs6} 풀텍스트 매칭 없음` };
+  return { error: `입력 HS ${hs} → 협정 규정 조회 HS6 ${hs6}. 저장된 원문에 해당 규정이 없습니다. 입력 자릿수 오류가 아니라 원문 데이터 누락 또는 매칭 문제입니다.` };
 }
 
 // 페이지 로드 시 인덱스 자동 구축
@@ -4879,6 +4882,8 @@ function runPsrAnalysis(input) {
         page: r0.page,
         sourceFta: fullLookup.fta,
         sourceUrl: r0.source_url || '',
+        language: r0.language || '',
+        annexLabel: r0.annex_label || '부속서 II',
         annexText: r0.annex_text || '',
         introductoryNotes: r0.introductory_notes || '', 
       };
@@ -9915,7 +9920,7 @@ function buildReportHtmlString() {
     originGrowth = R.production.growth;
   }
   const fmtNum = (n) => n === null || n === undefined ? "자료 없음" : (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  const fmtGrowth = (g) => g === null ? "계산 불가" : (g >= 0 ? "+" : "") + g.toFixed(1) + "%";
+  const fmtGrowth = (g) => g === null || g === undefined || !Number.isFinite(g) ? "계산 불가" : (g >= 0 ? "+" : "") + g.toFixed(1) + "%";
 
   // 위험도 카드 정보
   const riskCardData = (title, risk, detail) => {
@@ -9934,11 +9939,16 @@ function buildReportHtmlString() {
       R.psr && R.psr.status === "ok"
         ? `${_safe(psrLabel)}<br>${psrCode === "WO" ? "역외 원재료 사용 시 충족 불가" : _safe(R.psr.mainHit.codeNote)}`
         : "PSR 조회 불가"),
-    riskCardData("무역흐름 참고",
-      R.laundering && R.laundering.status === "ok" ? R.laundering.risk : "na",
-      R.laundering && R.laundering.status === "ok"
-        ? `${i.origin} 수입 ${fmtGrowth(originGrowth)} / ${i.transit} 수입 ${fmtGrowth(transitGrowth)}<br>경유 패턴 통계 참고·원산지 판정 제외`
-        : "경유국 미입력"),
+    {
+      title: "무역흐름 참고",
+      klass: "risk-na",
+      icon: R.laundering?.status !== "ok" ? "자료 미확인" :
+        [originGrowth, transitGrowth].some(g => Number.isFinite(g) && g !== 0) ? "📊 변화 관측" :
+        [originGrowth, transitGrowth].every(g => Number.isFinite(g)) ? "증감 없음" : "증감 계산 불가",
+      detail: R.laundering?.status === "ok"
+        ? `${i.origin} 수입 ${fmtGrowth(originGrowth)} / ${i.transit} 수입 ${fmtGrowth(transitGrowth)}<br>무역통계 참고 · 원산지 위험등급과 별개`
+        : _safe(R.laundering?.reason || "무역흐름 자료 미확인")
+    },
   ];
 
   // 세부 분석 항목
