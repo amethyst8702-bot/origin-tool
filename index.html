@@ -1791,7 +1791,7 @@ function renderPsrFulltext(hit) {
   return `<div class="mt-2 p-2" style="background:#e8f5e9;border-left:3px solid #2e7d4a;border-radius:4px">
     <strong>📜 원산지 결정기준 원문 · HS ${escapeText(hsDisplay)}</strong>
     <div class="mt-2" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7">${escapeText(ft.ruleText)}</div>
-    <div class="small text-muted mt-1">출처: ${escapeText(ft.sourceFta)} · PDF p.${escapeText(String(ft.page || '미상'))}${ft.matchType === 'hs4' ? ' · 해당 호 공통 규정' : ''}</div>
+    <div class="small text-muted mt-1">출처: ${escapeText(ft.sourceFta)} · PDF p.${escapeText(String(ft.page || '미상'))}${ft.sourceScope ? ' · ' + escapeText(ft.sourceScope) : ft.matchType === 'hs4' ? ' · 해당 호 공통 규정' : ''}</div>
   </div>`;
 }
 
@@ -1827,8 +1827,8 @@ function lookupPsrFulltext(ftaName, hs) {
   const ftaData = window.__PSR_FULLTEXT_DATA__?.ftas?.[fullKey];
   if (ftaData?.annex_text) {
     const queryHs6 = String(hs).replace(/\D/g, '').slice(0, 6);
-    const verified = (ftaData.rules || []).filter(r => r.verified && r.hs === queryHs6 && isUsablePsrRule(r));
-    if (verified.length) return {match: 'exact', fta: fullKey, rules: verified.map(r => ({...r, annex_text: ftaData.annex_text, annex_label: ftaData.annex_label}))};
+    const verified = (ftaData.rules || []).filter(r => r.verified && (r.hs === queryHs6 || (String(r.hs).length === 4 && queryHs6.startsWith(r.hs))) && isUsablePsrRule(r));
+    if (verified.length) return {match: verified[0].hs.length === 4 ? 'hs4' : 'exact', fta: fullKey, rules: verified.map(r => ({...r, annex_text: ftaData.annex_text, annex_label: ftaData.annex_label}))};
     return {error: `HS ${queryHs6}에 해당하는 개별 원산지 결정기준 원문이 아직 연결되지 않았습니다.`};
   }
   if (!window.__PSR_FULLTEXT_DATA__) return {error: 'psr_fulltext.js를 불러오지 못했습니다. index.html과 같은 폴더의 파일 및 업로드 상태를 확인하세요.'};
@@ -4876,6 +4876,7 @@ function runPsrAnalysis(input) {
         page: r0.page,
         sourceFta: fullLookup.fta,
         sourceUrl: r0.source_url || '',
+        sourceScope: r0.source_scope || '',
         language: r0.language || '',
         annexLabel: r0.annex_label || '부속서 II',
         annexText: r0.annex_text || '',
